@@ -1,4 +1,5 @@
 # dingcad
+![dingcad](https://github.com/yacineMTB/dingcad/assets/10282244/15ab2781-f540-4833-801e-416442b258f6)
 
 This is dingcad. These are yacine's personal scripts used to design cad shapes.
 
@@ -9,6 +10,7 @@ Big thanks to elalish and manifold cad. Some projects make me feel very little. 
 ### DINGCAD! usage
 
 ```
+git clone https://github.com/yacineMTB/dingcad/ && cd dingcad
 npm run install
 npm run cad
 open https://localhost:3000
