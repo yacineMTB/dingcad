@@ -15,7 +15,7 @@ const defaults = {
   roughness: 0.1,
   metallic: 0,
   baseColorFactor: [0.5, 0.5, 0],
-  alpha: 2,
+  alpha: 1,
   unlit: false,
   animationLength: 1,
   animationMode: 'loop'
@@ -31,7 +31,5 @@ async function runAndSave(fn: any) {
     console.log(`out.glb updated ${outputPath}`);
   }
 }
-
-
 
 runAndSave(mainAssembly);
