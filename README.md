@@ -1,7 +1,7 @@
 ## dingcad is literally just a manifoldcad wrapper with a hot reloading script
 easy packaging
 
-goto https://github.com/elalish/manifold
+credits to manifold cad https://github.com/elalish/manifold
 
 # dingcad
 <img src="https://github.com/yacineMTB/dingcad/assets/10282244/15ab2781-f540-4833-801e-416442b258f6" alt="wordart (6)" style="width:200px;height:100px;">
