@@ -7,10 +7,8 @@ const fs = require('fs');
 const app = express();
 const server = http.createServer(app);
 
-// Setting up the WebSocket server on the same port as HTTP server
 const wss = new WebSocket.Server({ server });
 
-// Path to the GLB file
 const glbFilePath = path.join(__dirname, 'out.glb');
 
 // Watch the GLB file for changes and notify connected clients
@@ -25,17 +23,19 @@ fs.watch(glbFilePath, (eventType) => {
     }
 });
 
-// Serve the static HTML file
+
+app.get('/dingcad.png', (req, res) => {
+    res.sendFile(path.join(__dirname, 'assets', 'dingcad.png'));
+});
+
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Serve the GLB file
 app.get('/out.glb', (req, res) => {
     res.sendFile(glbFilePath);
 });
 
-// Handle WebSocket connections
 wss.on('connection', function connection(ws) {
     console.log('A new client connected.');
     ws.send('Welcome New Client!');
@@ -46,10 +46,7 @@ wss.on('connection', function connection(ws) {
     });
 });
 
-// Define the server port
 const PORT = process.env.PORT || 3000;
-
-// Start the server
 server.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}/`);
 });

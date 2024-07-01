@@ -6,7 +6,7 @@ export const mainAssembly = (manifold: ManifoldToplevel) => {
   const tableTopWidth = 120;
   const tableTopDepth = 80;
   const tableTopHeight = 5;
-  const legHeight = 70;
+  const legHeight = 75;
   const legRadius = 3;
 
   const tableTop = cube([tableTopWidth, tableTopDepth, tableTopHeight]);

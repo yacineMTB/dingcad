@@ -12,19 +12,81 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
 <script>
     let camera, scene, renderer, controls, loader, model;
+
+    let cube, animationId;
+
     let isCameraManual = false;
 
     init();
     setupWebSocket();
+
+    function loadImage() {
+        const horizontalTexture = new THREE.TextureLoader().load('http://localhost:3000/dingcad.png');
+        horizontalTexture.transparent = true;
+
+        const materials = [
+            new THREE.MeshBasicMaterial({
+                map: horizontalTexture,
+                transparent: true,
+                opacity: 1,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            }),
+            new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0, depthWrite: false}),
+            new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0, depthWrite: false}),
+            new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0, depthWrite: false}),
+            new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0, depthWrite: false}),
+            new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0, depthWrite: false})
+        ];
+
+        const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        cube = new THREE.Mesh(geometry, materials);
+        cube.position.set(0, 0, 0);
+        scene.add(cube);
+        startFloatingAnimation();
+    }
+
+    function startFloatingAnimation() {
+        let startTime = Date.now();
+        const duration = 2000;
+        const maxHeight = 0.1;
+
+        function animate() {
+            let elapsedTime = Date.now() - startTime;
+            let progress = Math.min(elapsedTime / duration, 1);
+            let easedProgress = 1 - Math.pow(1 - progress, 3);
+
+            cube.position.y = maxHeight * easedProgress;
+            cube.material[0].opacity = 2 - easedProgress * 2;
+
+            render();
+            
+            if (progress < 0.8) {
+                animationId = requestAnimationFrame(animate);
+            } else {
+                cancelAnimationFrame(animationId);
+                cleanupCube();
+                render();
+            }
+        }
+        animate();
+    }
+
+    function cleanupCube() {
+        scene.remove(cube);
+        cube.geometry.dispose();
+        cube.material.forEach(material => material.dispose());
+        cube = null;
+    }
 
     function init() {
         const container = document.createElement('div');
         document.body.appendChild(container);
 
         camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
-
         camera.position.set(0, 2, 5);
 
         scene = new THREE.Scene();
@@ -43,7 +105,6 @@
 
         createCustomGrid();
 
-        // WebGL Renderer
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -66,7 +127,6 @@
     }
 
     function setupWebSocket() {
-        // Establish WebSocket connection
         const socket = new WebSocket('ws://localhost:3000');
         socket.onmessage = function(event) {
             if (event.data === 'update') {
@@ -101,6 +161,9 @@
     }
 
     function loadModel() {
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+        }
         loader.load('out.glb', function(gltf) {
             if (model) scene.remove(model);
             model = gltf.scene;
@@ -109,10 +172,12 @@
                 adjustCamera(model);
             }
             render();
+            loadImage();
         }, undefined, function(error) {
             console.error('An error happened', error);
         });
     }
+
     function adjustCamera(model) {
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
