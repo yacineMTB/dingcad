@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>dingcad</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+    let camera, scene, renderer, controls, loader, model;
+    let isCameraManual = false;
+
+    init();
+    setupWebSocket();
+
+    function init() {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
+
+        camera.position.set(0, 2, 5);
+
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf0f0f0);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+        scene.add(ambientLight);
+
+        const directionalLight1 = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight1.position.set(10, 10, 10).normalize();
+        scene.add(directionalLight1);
+
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight2.position.set(-10, -10, -10).normalize();
+        scene.add(directionalLight2);
+
+        createCustomGrid();
+
+        // WebGL Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
+
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.addEventListener('change', () => {
+            render();
+            isCameraManual = true;
+        });
+        controls.zoomSpeed = 0.5;
+        controls.minDistance = 0;
+        controls.maxDistance = Infinity;
+        controls.update();
+
+        window.addEventListener('resize', onWindowResize);
+
+        loader = new THREE.GLTFLoader();
+        loadModel();
+    }
+
+    function setupWebSocket() {
+        // Establish WebSocket connection
+        const socket = new WebSocket('ws://localhost:3000');
+        socket.onmessage = function(event) {
+            if (event.data === 'update') {
+                console.log('Model update detected. Reloading...');
+                loadModel();
+            }
+        };
+    }
+
+    function createCustomGrid() {
+        const gridHelper = new THREE.GridHelper(20, 2000);
+        scene.add(gridHelper);
+        const material = new THREE.LineBasicMaterial({ color: 0x000000 });
+        const xGeometry = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(-10, 0, 0),
+            new THREE.Vector3(10, 0, 0)
+        ]);
+        const xLine = new THREE.Line(xGeometry, material);
+        scene.add(xLine);
+        const yGeometry = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, -10, 0),
+            new THREE.Vector3(0, 10, 0)
+        ]);
+        const yLine = new THREE.Line(yGeometry, material);
+        scene.add(yLine);
+        const zGeometry = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, -10),
+            new THREE.Vector3(0, 0, 10)
+        ]);
+        const zLine = new THREE.Line(zGeometry, material);
+        scene.add(zLine);
+    }
+
+    function loadModel() {
+        loader.load('out.glb', function(gltf) {
+            if (model) scene.remove(model);
+            model = gltf.scene;
+            scene.add(model);
+            if (!isCameraManual) {
+                adjustCamera(model);
+            }
+            render();
+        }, undefined, function(error) {
+            console.error('An error happened', error);
+        });
+    }
+    function adjustCamera(model) {
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        camera.position.set(0.12, 0.10, 0.17);
+        camera.rotation.set(-0.49, 0.53, 0.26);
+        controls.target.copy(center);
+        controls.update();
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        render();
+    }
+
+    function render() {
+        renderer.render(scene, camera);
+    }
+</script>
+</body>
+</html>
+
+
