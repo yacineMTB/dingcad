@@ -1,5 +1,5 @@
 # dingcad
-![dingcad](https://github.com/yacineMTB/dingcad/assets/10282244/15ab2781-f540-4833-801e-416442b258f6)
+<img src="https://github.com/yacineMTB/dingcad/assets/10282244/15ab2781-f540-4833-801e-416442b258f6" alt="wordart (6)" style="width:200px;height:100px;">
 
 This is dingcad. These are yacine's personal scripts used to design cad shapes.
 
