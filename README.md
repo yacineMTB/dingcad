@@ -12,6 +12,12 @@ Dingcad allows you to write cad scripts and have live reloading on a web browser
 
 Big thanks to elalish and manifold cad. Some projects make me feel very little. Manfioldcad is one of those projects.
 
+
+
+https://github.com/yacineMTB/dingcad/assets/10282244/f2f98447-86df-46a5-9c18-6f06d1448e6c
+
+
+
 ### DINGCAD! usage
 
 ```
