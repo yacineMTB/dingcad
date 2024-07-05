@@ -1,4 +1,4 @@
-// When this script is run, the manifold definition in 
+//llmWhen this script is run, the manifold definition in 
 // main_assembly.ts is saved to output.glb
 // you can run this with npm run cad, which will 
 // render out output.glb on autosave

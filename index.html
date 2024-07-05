@@ -137,7 +137,7 @@
     }
 
     function createCustomGrid() {
-        const gridHelper = new THREE.GridHelper(20, 2000);
+        const gridHelper = new THREE.GridHelper(0.2, 20);
         scene.add(gridHelper);
         const material = new THREE.LineBasicMaterial({ color: 0x000000 });
         const xGeometry = new THREE.BufferGeometry().setFromPoints([
@@ -201,5 +201,4 @@
 </script>
 </body>
 </html>
-
 
