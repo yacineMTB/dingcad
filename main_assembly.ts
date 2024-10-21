@@ -1,47 +1,39 @@
-import { ManifoldToplevel } from './manifold_lib//built/manifold';
-import { pointedLeg} from "./parts/pointedLeg";
+import { ManifoldToplevel, Vec3, Vec2, Manifold, CrossSection } from './manifold_lib/built/manifold';
+import { color , green, blue } from './parts/colorgradient';
+import { createNode } from './parts/createGLTFNode';
 
+export const mainAssembly = (m: ManifoldToplevel) => {
+  const { Manifold, CrossSection } = m;
+  const cornerRadius=2;
+  const wall = (CrossSection.square([150, 5], false)
+    .translate([4, 0])).offset(-cornerRadius, 'Round', undefined, 64)
+                              .offset(cornerRadius, 'Round', undefined, 64);
+;
+  const secondWall = wall.mirror([1, 0]);
+  let walls = secondWall.add(wall)
+  walls = walls;
+  const fourWalls = walls.add(walls.rotate(90).translate(5/2, 5/2))
+ 
 
-export const mainAssembly = (manifoldTop: any) => {
-  const { Manifold, CrossSection } = manifoldTop as ManifoldToplevel;
+  let connector = color(
+      CrossSection.square([30, 10])
+        .translate(-5)
+        .add(
+          CrossSection.square([30, 10])
+            .rotate(90)
+            .translate([15, -10])
+        )
+      .extrude(100)
+  )
+    .translate(-10, -2.5)
+    .subtract(fourWalls.extrude(96))
+    // .add(green(walls.extrude(47)))
 
-  const legDistance = 50;
-  const legRadius = 3;
-  const legHeight = 100;
-  const pointHeight = 40;
-  const curvatureSegments = 10;
-
-  const ringOuterRadius = legDistance / 2 + legRadius;
-  const ringInnerRadius = legDistance / 2 - legRadius / 10;
-  const ringThickness = legRadius;
-
-
-  const innerRing = Manifold.cylinder(ringThickness, ringInnerRadius, ringInnerRadius, 64, false);
-
-  const createHalfLeg = () => {
-    const leg = pointedLeg(manifoldTop, {
-      legRadius,
-      legHeight,
-      pointHeight,
-      curvatureSegments
-    });
-    return leg.splitByPlane([0, 1, 0], 0)[0];
-  };
-
-  const createRing = () => {
-    const outerRing = Manifold.cylinder(ringThickness, ringOuterRadius, ringOuterRadius, 64, false);
-    return outerRing.subtract(innerRing).rotate(270, 0, 0);
-  };
-
-  const leftLeg = createHalfLeg().translate(-legDistance / 2, 0, 0).subtract(Manifold.cube());
-  const rightLeg = createHalfLeg().translate(legDistance / 2, 0, 0);
-  const ring = createRing();
-  return Manifold.union([
-    leftLeg,
-    rightLeg,
-    ring
-  ]).subtract(
-    innerRing.rotate(270, 0, 0)
-  );
+  return connector
+    .add(color(wall.translate(-50, -50).extrude(96)))
 };
 
+// 320 = n * 2 + 8
+// 160 = n + 8
+// n = 160 - 8 = 160-8=16
+//

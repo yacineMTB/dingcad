@@ -261,7 +261,7 @@ interface To3MF {
   header: Header;
 }
 
-class GLTFNode {
+export class GLTFNode {
   private _parent?: GLTFNode;
   manifold?: Manifold;
   translation?: Vec3|((t: number) => Vec3);

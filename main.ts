@@ -8,6 +8,8 @@ import path from 'path';
 import { exportModels } from './manifold_lib/worker';
 import Module from './manifold_lib/built/manifold';
 import { mainAssembly } from './main_assembly';
+import { createNode } from './parts/createGLTFNode';
+
 export const manifoldModule = await Module();
 manifoldModule.setup();
 
@@ -22,7 +24,9 @@ const defaults = {
 };
 
 async function runAndSave(fn: any) {
-  const result = await exportModels(defaults as any, fn(manifoldModule));
+  const gltfNode = createNode(fn(manifoldModule));
+  const result = await exportModels(defaults as any, gltfNode.manifold);
+
   if (result) {
     const response = await fetch(result.glbURL);
     const buffer = await response.arrayBuffer();
