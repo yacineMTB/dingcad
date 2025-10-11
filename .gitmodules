@@ -1,0 +1,6 @@
+[submodule "vendor/manifold"]
+	path = vendor/manifold
+	url = https://github.com/elalish/manifold
+[submodule "vendor/quickjs"]
+	path = vendor/quickjs
+	url = https://github.com/quickjs-ng/quickjs
