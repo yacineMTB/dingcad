@@ -1,0 +1,3 @@
+manifold::Manifold cube = manifold::Manifold::Cube({2.0, 2.0, 2.0}, true);
+manifold::Manifold sphere = manifold::Manifold::Sphere(1.5, 0);
+manifold::Manifold result = cube + sphere.Translate({0.0, 1.0, 0.0});
