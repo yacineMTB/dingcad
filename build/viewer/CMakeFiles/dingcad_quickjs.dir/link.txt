@@ -1,2 +1,0 @@
-/Library/Developer/CommandLineTools/usr/bin/ar qc libdingcad_quickjs.a CMakeFiles/dingcad_quickjs.dir/__/vendor/quickjs/quickjs.c.o "CMakeFiles/dingcad_quickjs.dir/__/vendor/quickjs/quickjs-libc.c.o" CMakeFiles/dingcad_quickjs.dir/__/vendor/quickjs/cutils.c.o CMakeFiles/dingcad_quickjs.dir/__/vendor/quickjs/libunicode.c.o CMakeFiles/dingcad_quickjs.dir/__/vendor/quickjs/libregexp.c.o CMakeFiles/dingcad_quickjs.dir/__/vendor/quickjs/dtoa.c.o
-/Library/Developer/CommandLineTools/usr/bin/ranlib libdingcad_quickjs.a

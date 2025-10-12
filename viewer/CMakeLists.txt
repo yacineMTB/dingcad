@@ -11,7 +11,10 @@ add_library(dingcad_quickjs STATIC
 target_include_directories(dingcad_quickjs PUBLIC ${PROJECT_SOURCE_DIR}/vendor/quickjs)
 set_target_properties(dingcad_quickjs PROPERTIES LINKER_LANGUAGE C)
 
-add_executable(dingcad_viewer main.cpp)
+add_executable(dingcad_viewer
+  main.cpp
+  js_bindings.cpp
+)
 
 target_include_directories(dingcad_viewer
   PRIVATE

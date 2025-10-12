@@ -1,11 +1,10 @@
-const tests = [];
 const spacing = 2.8;
 const columns = 8;
+const baseShapes = [];
 
-function place(manifold) {
-  const idx = tests.length;
-  const col = idx % columns;
-  const row = Math.floor(idx / columns);
+function translateToGrid(manifold, index) {
+  const col = index % columns;
+  const row = Math.floor(index / columns);
   return translate(manifold, [col * spacing, 0, row * spacing]);
 }
 
@@ -18,9 +17,9 @@ function test(name, builder) {
   try {
     const result = builder();
     if (!result) throw new Error(`${name} returned null`);
-    tests.push(place(result));
+    baseShapes.push(result);
   } catch (error) {
-    tests.push(place(failMarker()));
+    baseShapes.push(failMarker());
   }
 }
 
@@ -235,8 +234,18 @@ test("metrics", () => {
   return translate(scale(shape, scaleFactor), [0, lift, 0]);
 });
 
-if (tests.length === 0) {
+const repeatCount = 200;
+const placed = [];
+if (baseShapes.length > 0) {
+  for (let r = 0; r < repeatCount; ++r) {
+    for (const shape of baseShapes) {
+      placed.push(translateToGrid(shape, placed.length));
+    }
+  }
+}
+
+if (placed.length === 0) {
   scene = cube({ size: [1, 1, 1], center: true });
 } else {
-  scene = compose(tests);
+  scene = compose(placed);
 }
