@@ -1,0 +1,40 @@
+# Compute the installation prefix relative to this file, so we can have the
+# subsequent find_package calls first check for bundled dependencies.
+get_filename_component(_FIND_ROOT "${CMAKE_CURRENT_LIST_FILE}" PATH)
+# CMAKE_CURRENT_LIST_FILE path is several directories below the path we want
+# for _FIND_ROOT, so we need multiple get_filename_component calls to trim it
+# back to the the root path.
+get_filename_component(_FIND_ROOT "${_FIND_ROOT}" PATH)
+get_filename_component(_FIND_ROOT "${_FIND_ROOT}" PATH)
+get_filename_component(_FIND_ROOT "${_FIND_ROOT}" PATH)
+if(_FIND_ROOT STREQUAL "/")
+  set(_FIND_ROOT "")
+endif()
+
+set(MANIFOLD_FOUND TRUE)
+
+set(MANIFOLD_SHARED_LIB "ON")
+set(MANIFOLD_CROSS_SECTION "OFF")
+set(MANIFOLD_USE_BUILTIN_CLIPPER2 "OFF")
+# if built as shared lib and using builtin, no need to find clipper2
+# otherwise, we need to find it
+if(
+  MANIFOLD_CROSS_SECTION
+  AND NOT (MANIFOLD_SHARED_LIB AND MANIFOLD_USE_BUILTIN_CLIPPER2)
+)
+  set(Clipper2_ROOT "${_FIND_ROOT}")
+  find_package(Clipper2 REQUIRED)
+endif()
+set(MANIFOLD_PAR "ON")
+set(MANIFOLD_USE_BUILTIN_TBB "OFF")
+if(
+  MANIFOLD_PAR STREQUAL "ON"
+  AND NOT (MANIFOLD_SHARED_LIB AND MANIFOLD_USE_BUILTIN_TBB)
+)
+  find_package(TBB REQUIRED)
+endif()
+set(MANIFOLD_EXPORT "OFF")
+if(MANIFOLD_EXPORT)
+  find_package(assimp REQUIRED)
+endif(MANIFOLD_EXPORT)
+include("${CMAKE_CURRENT_LIST_DIR}/manifoldTargets.cmake")

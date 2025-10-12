@@ -1,0 +1,55 @@
+# DingCAD JavaScript API Cheat Sheet
+
+- cube{options: {size:[x,y,z], center:bool}}
+- sphere{options: {radius:number}}
+- cylinder{options: {height:number, radius:number, radiusTop:number, center:bool}}
+- tetrahedron{}
+- compose{...manifolds | manifolds[]}
+- decompose{manifold}
+- union{...manifolds}
+- difference{...manifolds}
+- intersection{...manifolds}
+- boolean{a,b,op:"add"|"subtract"|"intersect"}
+- batchBoolean{op:"add"|"subtract"|"intersect", manifolds[] | ...manifolds}
+- translate{manifold,[dx,dy,dz]}
+- scale{manifold, factor|[sx,sy,sz]}
+- rotate{manifold,[rx,ry,rz]}
+- mirror{manifold,[nx,ny,nz]}
+- transform{manifold,[m00,m01,m02,m03,...,m22,m23]}
+- trimByPlane{manifold,[nx,ny,nz],offset}
+- hull{...manifolds | manifolds[]}
+- hullPoints{[[x,y,z],...]}
+- compose polygons as [[x,y],...] loops grouped like [loop0, loop1,...]
+- extrude{polygons, options:{height:number, divisions?:int, twistDegrees?:number, scaleTop?:number|[sx,sy]}}
+- revolve{polygons, options?:{segments?:int, degrees?:number}}
+- slice{manifold, height?:number}
+- project{manifold}
+- levelSet{options:{sdf(point:[x,y,z])=>number, bounds:{min:[x,y,z], max:[x,y,z]}, edgeLength:number, level?:number, tolerance?:number}}
+- setTolerance{manifold, tolerance}
+- getTolerance{manifold}
+- simplify{manifold, tolerance?}
+- refine{manifold, iterations}
+- refineToLength{manifold, length}
+- refineToTolerance{manifold, tolerance}
+- smoothByNormals{manifold, normalIdx}
+- smoothOut{manifold, minSharpAngle?, minSmoothness?}
+- calculateNormals{manifold, normalIdx, minSharpAngle?}
+- calculateCurvature{manifold, gaussianIdx, meanIdx}
+- asOriginal{manifold}
+- originalId{manifold}
+- reserveIds{count}
+- surfaceArea{manifold}
+- volume{manifold}
+- boundingBox{manifold} // returns {min:[x,y,z], max:[x,y,z]}
+- minGap{manifoldA, manifoldB, searchLength}
+- isEmpty{manifold}
+- status{manifold}
+- numTriangles{manifold}
+- numVertices{manifold}
+- numEdges{manifold}
+- numProperties{manifold}
+- numPropertyVertices{manifold}
+- genus{manifold}
+- decompose polygons back to JS with slice/project return [[x,y],...] loops
+
+Assign your final solid to `scene` to render, e.g. `scene = cube({...});`.
