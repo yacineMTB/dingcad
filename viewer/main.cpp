@@ -490,7 +490,7 @@ int main() {
     ClearBackground(RAYWHITE);
 
     BeginMode3D(camera);
-    DrawXZGrid(12, 0.5f, Fade(LIGHTGRAY, 0.4f));
+    DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
     DrawAxes(2.0f);
     DrawModel(model, {0.0f, 0.0f, 0.0f}, 1.0f, WHITE);
     DrawModelWires(model, {0.0f, 0.0f, 0.0f}, 1.001f, kWireColor);
