@@ -1,13 +1,16 @@
 #include "raylib.h"
 #include "raymath.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -28,58 +31,40 @@ const Color kWireColor = Fade(BLACK, 0.25f);
 const char *kBrandText = "dingcad";
 constexpr float kBrandFontSize = 28.0f;
 
-void DestroyMeshAndModel(Model &model, Mesh &mesh) {
+void DestroyModel(Model &model) {
   if (model.meshes != nullptr || model.materials != nullptr) {
     UnloadModel(model);
   }
-  mesh = Mesh{};
   model = Model{};
 }
 
-Mesh CreateRaylibMeshFrom(const manifold::MeshGL &meshGL) {
-  Mesh mesh = {0};
+Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
+  Model model = {0};
   const int vertexCount = meshGL.NumVert();
   const int triangleCount = meshGL.NumTri();
 
-  mesh.vertexCount = vertexCount;
-  mesh.triangleCount = triangleCount;
-  mesh.vertices = static_cast<float *>(MemAlloc(vertexCount * 3 * sizeof(float)));
-  mesh.normals = static_cast<float *>(MemAlloc(vertexCount * 3 * sizeof(float)));
-  mesh.indices = static_cast<unsigned short *>(
-      MemAlloc(triangleCount * 3 * sizeof(unsigned short)));
-  mesh.colors = static_cast<unsigned char *>(
-      MemAlloc(vertexCount * 4 * sizeof(unsigned char)));
-  mesh.texcoords = nullptr;
-  mesh.texcoords2 = nullptr;
-  mesh.tangents = nullptr;
+  if (vertexCount <= 0 || triangleCount <= 0) {
+    return model;
+  }
 
   const int stride = meshGL.numProp;
+  std::vector<Vector3> positions(vertexCount);
   for (int v = 0; v < vertexCount; ++v) {
     const int base = v * stride;
-    mesh.vertices[v * 3 + 0] = meshGL.vertProperties[base + 0];
-    mesh.vertices[v * 3 + 1] = meshGL.vertProperties[base + 1];
-    mesh.vertices[v * 3 + 2] = meshGL.vertProperties[base + 2];
-    mesh.normals[v * 3 + 0] = 0.0f;
-    mesh.normals[v * 3 + 1] = 0.0f;
-    mesh.normals[v * 3 + 2] = 0.0f;
+    positions[v] = {meshGL.vertProperties[base + 0],
+                    meshGL.vertProperties[base + 1],
+                    meshGL.vertProperties[base + 2]};
   }
 
-  for (int i = 0; i < triangleCount * 3; ++i) {
-    mesh.indices[i] = static_cast<unsigned short>(meshGL.triVerts[i]);
-  }
-
-  std::vector<Vector3> accum(vertexCount);
+  std::vector<Vector3> accum(vertexCount, {0.0f, 0.0f, 0.0f});
   for (int tri = 0; tri < triangleCount; ++tri) {
-    const int i0 = mesh.indices[tri * 3 + 0];
-    const int i1 = mesh.indices[tri * 3 + 1];
-    const int i2 = mesh.indices[tri * 3 + 2];
+    const int i0 = meshGL.triVerts[tri * 3 + 0];
+    const int i1 = meshGL.triVerts[tri * 3 + 1];
+    const int i2 = meshGL.triVerts[tri * 3 + 2];
 
-    const Vector3 p0 = {mesh.vertices[i0 * 3 + 0], mesh.vertices[i0 * 3 + 1],
-                        mesh.vertices[i0 * 3 + 2]};
-    const Vector3 p1 = {mesh.vertices[i1 * 3 + 0], mesh.vertices[i1 * 3 + 1],
-                        mesh.vertices[i1 * 3 + 2]};
-    const Vector3 p2 = {mesh.vertices[i2 * 3 + 0], mesh.vertices[i2 * 3 + 1],
-                        mesh.vertices[i2 * 3 + 2]};
+    const Vector3 p0 = positions[i0];
+    const Vector3 p1 = positions[i1];
+    const Vector3 p2 = positions[i2];
 
     const Vector3 u = {p1.x - p0.x, p1.y - p0.y, p1.z - p0.z};
     const Vector3 v = {p2.x - p0.x, p2.y - p0.y, p2.z - p0.z};
@@ -97,22 +82,19 @@ Mesh CreateRaylibMeshFrom(const manifold::MeshGL &meshGL) {
     accum[i2].z += n.z;
   }
 
+  std::vector<Vector3> normals(vertexCount);
+  std::vector<Color> colors(vertexCount);
+  const Vector3 lightDir = Vector3Normalize({0.45f, 0.85f, 0.35f});
   for (int v = 0; v < vertexCount; ++v) {
     const Vector3 n = accum[v];
     const float length = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
-    if (length > 0.0f) {
-      mesh.normals[v * 3 + 0] = n.x / length;
-      mesh.normals[v * 3 + 1] = n.y / length;
-      mesh.normals[v * 3 + 2] = n.z / length;
-    } else {
-      mesh.normals[v * 3 + 0] = 0.0f;
-      mesh.normals[v * 3 + 1] = 1.0f;
-      mesh.normals[v * 3 + 2] = 0.0f;
-    }
 
-    const Vector3 normal = {mesh.normals[v * 3 + 0], mesh.normals[v * 3 + 1],
-                            mesh.normals[v * 3 + 2]};
-    const Vector3 lightDir = Vector3Normalize({0.45f, 0.85f, 0.35f});
+    Vector3 normal = {0.0f, 1.0f, 0.0f};
+    if (length > 0.0f) {
+      normal = {n.x / length, n.y / length, n.z / length};
+    }
+    normals[v] = normal;
+
     float intensity = Vector3DotProduct(normal, lightDir);
     intensity = Clamp(intensity, 0.0f, 1.0f);
     constexpr int toonSteps = 3;
@@ -127,17 +109,130 @@ Mesh CreateRaylibMeshFrom(const manifold::MeshGL &meshGL) {
     float finalIntensity = Clamp(ambient + diffuse * toon, 0.0f, 1.0f);
 
     const Color base = kBaseColor;
-    mesh.colors[v * 4 + 0] = static_cast<unsigned char>(
+    Color color = {0};
+    color.r = static_cast<unsigned char>(
         Clamp(base.r * finalIntensity, 0.0f, 255.0f));
-    mesh.colors[v * 4 + 1] = static_cast<unsigned char>(
+    color.g = static_cast<unsigned char>(
         Clamp(base.g * finalIntensity, 0.0f, 255.0f));
-    mesh.colors[v * 4 + 2] = static_cast<unsigned char>(
+    color.b = static_cast<unsigned char>(
         Clamp(base.b * finalIntensity, 0.0f, 255.0f));
-    mesh.colors[v * 4 + 3] = base.a;
+    color.a = base.a;
+    colors[v] = color;
   }
 
-  UploadMesh(&mesh, false);
-  return mesh;
+  constexpr int kMaxVerticesPerMesh = std::numeric_limits<unsigned short>::max();
+  std::vector<int> remap(vertexCount, 0);
+  std::vector<int> remapMarker(vertexCount, 0);
+  int chunkToken = 1;
+
+  std::vector<Mesh> meshes;
+  meshes.reserve(
+      static_cast<size_t>(triangleCount) / kMaxVerticesPerMesh + 1);
+
+  int triIndex = 0;
+  while (triIndex < triangleCount) {
+    const int currentToken = chunkToken++;
+    int chunkVertexCount = 0;
+    std::vector<Vector3> chunkPositions;
+    std::vector<Vector3> chunkNormals;
+    std::vector<Color> chunkColors;
+    std::vector<unsigned short> chunkIndices;
+
+    chunkPositions.reserve(std::min(kMaxVerticesPerMesh, vertexCount));
+    chunkNormals.reserve(std::min(kMaxVerticesPerMesh, vertexCount));
+    chunkColors.reserve(std::min(kMaxVerticesPerMesh, vertexCount));
+    chunkIndices.reserve(std::min(kMaxVerticesPerMesh, vertexCount) * 3);
+
+    while (triIndex < triangleCount) {
+      const int indices[3] = {meshGL.triVerts[triIndex * 3 + 0],
+                              meshGL.triVerts[triIndex * 3 + 1],
+                              meshGL.triVerts[triIndex * 3 + 2]};
+
+      int needed = 0;
+      for (int j = 0; j < 3; ++j) {
+        if (remapMarker[indices[j]] != currentToken) {
+          ++needed;
+        }
+      }
+
+      if (chunkVertexCount + needed > kMaxVerticesPerMesh) {
+        break;
+      }
+
+      for (int j = 0; j < 3; ++j) {
+        const int original = indices[j];
+        if (remapMarker[original] != currentToken) {
+          remapMarker[original] = currentToken;
+          remap[original] = chunkVertexCount++;
+          chunkPositions.push_back(positions[original]);
+          chunkNormals.push_back(normals[original]);
+          chunkColors.push_back(colors[original]);
+        }
+        chunkIndices.push_back(static_cast<unsigned short>(remap[original]));
+      }
+      ++triIndex;
+    }
+
+    Mesh chunkMesh = {0};
+    chunkMesh.vertexCount = chunkVertexCount;
+    chunkMesh.triangleCount = static_cast<int>(chunkIndices.size() / 3);
+    chunkMesh.vertices = static_cast<float *>(
+        MemAlloc(chunkVertexCount * 3 * sizeof(float)));
+    chunkMesh.normals = static_cast<float *>(
+        MemAlloc(chunkVertexCount * 3 * sizeof(float)));
+    chunkMesh.colors = static_cast<unsigned char *>(
+        MemAlloc(chunkVertexCount * 4 * sizeof(unsigned char)));
+    chunkMesh.indices = static_cast<unsigned short *>(
+        MemAlloc(chunkIndices.size() * sizeof(unsigned short)));
+    chunkMesh.texcoords = nullptr;
+    chunkMesh.texcoords2 = nullptr;
+    chunkMesh.tangents = nullptr;
+
+    for (int v = 0; v < chunkVertexCount; ++v) {
+      const Vector3 &pos = chunkPositions[v];
+      chunkMesh.vertices[v * 3 + 0] = pos.x;
+      chunkMesh.vertices[v * 3 + 1] = pos.y;
+      chunkMesh.vertices[v * 3 + 2] = pos.z;
+
+      const Vector3 &normal = chunkNormals[v];
+      chunkMesh.normals[v * 3 + 0] = normal.x;
+      chunkMesh.normals[v * 3 + 1] = normal.y;
+      chunkMesh.normals[v * 3 + 2] = normal.z;
+
+      const Color color = chunkColors[v];
+      chunkMesh.colors[v * 4 + 0] = color.r;
+      chunkMesh.colors[v * 4 + 1] = color.g;
+      chunkMesh.colors[v * 4 + 2] = color.b;
+      chunkMesh.colors[v * 4 + 3] = color.a;
+    }
+
+    std::memcpy(chunkMesh.indices, chunkIndices.data(),
+                chunkIndices.size() * sizeof(unsigned short));
+    UploadMesh(&chunkMesh, false);
+    meshes.push_back(chunkMesh);
+  }
+
+  if (meshes.empty()) {
+    return model;
+  }
+
+  model.transform = MatrixIdentity();
+  model.meshCount = static_cast<int>(meshes.size());
+  model.meshes = static_cast<Mesh *>(
+      MemAlloc(model.meshCount * sizeof(Mesh)));
+  for (int i = 0; i < model.meshCount; ++i) {
+    model.meshes[i] = meshes[i];
+  }
+  model.materialCount = 1;
+  model.materials = static_cast<Material *>(MemAlloc(sizeof(Material)));
+  model.materials[0] = LoadMaterialDefault();
+  model.meshMaterial = static_cast<int *>(
+      MemAlloc(model.meshCount * sizeof(int)));
+  for (int i = 0; i < model.meshCount; ++i) {
+    model.meshMaterial[i] = 0;
+  }
+
+  return model;
 }
 
 void DrawAxes(float length) {
@@ -233,14 +328,11 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   return result;
 }
 
-bool ReplaceScene(Model &model, Mesh &mesh,
+bool ReplaceScene(Model &model,
                   const std::shared_ptr<manifold::Manifold> &scene) {
   if (!scene) return false;
-  manifold::MeshGL meshGL = scene->GetMeshGL();
-  Mesh newMesh = CreateRaylibMeshFrom(meshGL);
-  Model newModel = LoadModelFromMesh(newMesh);
-  DestroyMeshAndModel(model, mesh);
-  mesh = newMesh;
+  Model newModel = CreateRaylibModelFrom(scene->GetMeshGL());
+  DestroyModel(model);
   model = newModel;
   return true;
 }
@@ -311,8 +403,7 @@ int main() {
     }
   }
 
-  Mesh mesh = CreateRaylibMeshFrom(scene->GetMeshGL());
-  Model model = LoadModelFromMesh(mesh);
+  Model model = CreateRaylibModelFrom(scene->GetMeshGL());
 
   while (!WindowShouldClose()) {
     const Vector2 mouseDelta = GetMouseDelta();
@@ -321,7 +412,7 @@ int main() {
       auto load = LoadSceneFromFile(runtime, scriptPath);
       if (load.success) {
         scene = load.manifold;
-        ReplaceScene(model, mesh, scene);
+        ReplaceScene(model, scene);
         reportStatus(load.message);
       } else {
         reportStatus(load.message);
@@ -415,7 +506,7 @@ int main() {
     EndDrawing();
   }
 
-  DestroyMeshAndModel(model, mesh);
+  DestroyModel(model);
   if (brandingFontCustom) {
     UnloadFont(brandingFont);
   }
