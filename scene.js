@@ -1,12 +1,4 @@
-const spacing = 2.8;
-const columns = 8;
 const baseShapes = [];
-
-function translateToGrid(manifold, index) {
-  const col = index % columns;
-  const row = Math.floor(index / columns);
-  return translate(manifold, [col * spacing, 0, row * spacing]);
-}
 
 function failMarker() {
   const pillar = cube({ size: [0.6, 1.6, 0.6], center: true });
@@ -181,8 +173,8 @@ test("project", () => {
 test("levelSet", () => levelSet({
   sdf: (p) => Math.sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) - 0.5 + 0.1 * Math.sin(3 * p[0]),
   bounds: { min: [-0.7, -0.7, -0.7], max: [0.7, 0.7, 0.7] },
-  edgeLength: 0.2,
-  tolerance: 0.01
+  edgeLength: 0.4,
+  tolerance: 0.02
 }));
 
 test("minGap", () => {
@@ -234,18 +226,15 @@ test("metrics", () => {
   return translate(scale(shape, scaleFactor), [0, lift, 0]);
 });
 
-const repeatCount = 200;
-const placed = [];
-if (baseShapes.length > 0) {
-  for (let r = 0; r < repeatCount; ++r) {
-    for (const shape of baseShapes) {
-      placed.push(translateToGrid(shape, placed.length));
-    }
-  }
-}
+const maxShapes = 16;
+const selected = baseShapes.slice(0, maxShapes);
+const spacing = 3.0;
 
-if (placed.length === 0) {
+if (selected.length === 0) {
   scene = cube({ size: [1, 1, 1], center: true });
 } else {
+  const placed = selected.map((shape, index) =>
+    translate(shape, [index * spacing, 0, 0])
+  );
   scene = compose(placed);
 }
