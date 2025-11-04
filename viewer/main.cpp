@@ -1,5 +1,6 @@
 #include "raylib.h"
 #include "raymath.h"
+#include "rlgl.h"
 
 #include <algorithm>
 #include <array>
@@ -30,10 +31,42 @@ extern "C" {
 
 namespace {
 const Color kBaseColor = {210, 210, 220, 255};
-const Color kWireColor = Fade(BLACK, 0.25f);
 const char *kBrandText = "dingcad";
 constexpr float kBrandFontSize = 28.0f;
 constexpr float kSceneScale = 0.1f;  // convert mm scene units to renderer units
+
+// GLSL 330 core (desktop). Uses raylib's default attribute/uniform names.
+const char* kOutlineVS = R"glsl(
+#version 330
+
+in vec3 vertexPosition;
+in vec3 vertexNormal;
+
+uniform mat4 mvp;
+uniform float outline;   // world-units thickness
+
+void main()
+{
+    // Expand along the vertex normal in model space. This is robust as long as
+    // your model transform has no non-uniform scale (true in your code).
+    vec3 pos = vertexPosition + normalize(vertexNormal) * outline;
+    gl_Position = mvp * vec4(pos, 1.0);
+}
+)glsl";
+
+const char* kOutlineFS = R"glsl(
+#version 330
+
+out vec4 finalColor;
+uniform vec4 outlineColor;
+
+void main()
+{
+    // Keep only back-faces for a clean silhouette.
+    if (gl_FrontFacing) discard;
+    finalColor = outlineColor;
+}
+)glsl";
 
 struct Vec3f {
   float x;
@@ -650,6 +683,31 @@ int main() {
 
   Model model = CreateRaylibModelFrom(scene->GetMeshGL());
 
+  Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
+
+  // Cache uniform locations
+  const int locOutline = GetShaderLocation(outlineShader, "outline");
+  const int locOutlineColor = GetShaderLocation(outlineShader, "outlineColor");
+
+  // A dedicated material that uses the outline shader
+  Material outlineMat = LoadMaterialDefault();
+  outlineMat.shader = outlineShader;
+
+  // Helper to set outline uniforms each frame
+  auto setOutlineUniforms = [&](float worldThickness, Color color) {
+    float c[4] = {
+        color.r / 255.0f,
+        color.g / 255.0f,
+        color.b / 255.0f,
+        color.a / 255.0f};
+    SetShaderValue(outlineMat.shader, locOutline, &worldThickness, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(outlineMat.shader, locOutlineColor, c, SHADER_UNIFORM_VEC4);
+  };
+
+  // Choose a starting thickness in your renderer units (you already scale model by kSceneScale)
+  float outlineThickness = 0.02f;  // tweak to taste; ~2 cm if 1 unit == 1 m
+  Color outlineColor = BLACK;
+
   while (!WindowShouldClose()) {
     const Vector2 mouseDelta = GetMouseDelta();
 
@@ -807,8 +865,28 @@ int main() {
     BeginMode3D(camera);
     DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
     DrawAxes(2.0f);
+
+    // Optional: make thickness roughly constant in screen pixels.
+    // Uncomment to use 2px outlines independent of distance.
+    // {
+    //   const float pixels = 2.0f;
+    //   const float distance = Vector3Distance(camera.position, camera.target);
+    //   const float worldPerPixel =
+    //       2.0f * tanf(DEG2RAD * camera.fovy * 0.5f) * distance / static_cast<float>(GetScreenHeight());
+    //   outlineThickness = pixels * worldPerPixel;
+    // }
+
+    setOutlineUniforms(outlineThickness, outlineColor);
+
+    // Draw expanded back-faces first for the silhouette
+    rlDisableBackfaceCulling();
+    for (int i = 0; i < model.meshCount; ++i) {
+      DrawMesh(model.meshes[i], outlineMat, model.transform);
+    }
+    rlEnableBackfaceCulling();
+
+    // Draw your shaded model normally on top
     DrawModel(model, {0.0f, 0.0f, 0.0f}, 1.0f, WHITE);
-    DrawModelWires(model, {0.0f, 0.0f, 0.0f}, 1.001f, kWireColor);
     EndMode3D();
 
     const float margin = 20.0f;
@@ -827,6 +905,7 @@ int main() {
     EndDrawing();
   }
 
+  UnloadMaterial(outlineMat);   // also releases the shader
   DestroyModel(model);
   if (brandingFontCustom) {
     UnloadFont(brandingFont);

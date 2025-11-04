@@ -1,16 +1,18 @@
 import buildDTSPCB from './library/DTSPCB.js';
-import buildXiaoEsp32C3, { importXiaoEsp32C3 } from './library/xiao_esp32c3.js';
 
-const pcbAssembly = buildDTSPCB();
+const dts = buildDTSPCB();
+const bounds = boundingBox(dts);
+const padding = 2;
+const box = translate(
+  cube({
+    size: [
+      bounds.max[0] - bounds.min[0] + padding,
+      bounds.max[1] - bounds.min[1] + padding,
+      bounds.max[2] - bounds.min[2] + padding,
+    ],
+    center: false,
+  }),
+  [bounds.min[0], bounds.min[1], bounds.min[2]]
+);
 
-const modelPath = '~/Downloads/models/seedespc3.stl';
-let xiaoBoard;
-try {
-  xiaoBoard = importXiaoEsp32C3({ path: modelPath });
-} catch (error) {
-  xiaoBoard = buildXiaoEsp32C3();
-}
-
-export const scene = union(pcbAssembly, translate(xiaoBoard, [10, 0, 0]));
-export const dtsPcb = pcbAssembly;
-export const xiaoEsp32C3 = xiaoBoard;
+export const scene = difference(box, dts);
