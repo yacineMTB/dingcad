@@ -41,6 +41,7 @@ get_filename_component(REPO_ROOT "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
 add_subdirectory(${REPO_ROOT}/vendor/manifold ${CMAKE_BINARY_DIR}/vendor/manifold EXCLUDE_FROM_ALL)
 
 # Build QuickJS for web
+# Emscripten compatibility: define environ and sighandler_t
 add_library(dingcad_quickjs STATIC
   ${REPO_ROOT}/vendor/quickjs/quickjs.c
   ${REPO_ROOT}/vendor/quickjs/quickjs-libc.c
@@ -48,10 +49,18 @@ add_library(dingcad_quickjs STATIC
   ${REPO_ROOT}/vendor/quickjs/libunicode.c
   ${REPO_ROOT}/vendor/quickjs/libregexp.c
   ${REPO_ROOT}/vendor/quickjs/dtoa.c
+  quickjs_emscripten_compat.c
 )
 
 target_include_directories(dingcad_quickjs PUBLIC ${REPO_ROOT}/vendor/quickjs)
+# Include Emscripten compatibility header before QuickJS headers
+target_include_directories(dingcad_quickjs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(dingcad_quickjs PROPERTIES LINKER_LANGUAGE C)
+
+# Add compile flag to include compatibility header before system headers
+target_compile_options(dingcad_quickjs PRIVATE
+  -include ${CMAKE_CURRENT_SOURCE_DIR}/quickjs_emscripten_compat.h
+)
 
 # Raylib for web - use Emscripten port
 # Raylib will be built separately in the GitHub Actions workflow
