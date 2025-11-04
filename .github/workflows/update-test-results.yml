@@ -1,10 +1,13 @@
 name: Update Test Results on Master
 
+# TEMPORARILY DISABLED: Will re-enable after Build Web Version workflow is stable
+# To re-enable: Remove the workflow_dispatch-only trigger and uncomment the push trigger
+
 on:
-  push:
-    branches:
-      - master
-  workflow_dispatch:
+  # push:
+  #   branches:
+  #     - master
+  workflow_dispatch:  # Keep manual trigger available for testing
 
 jobs:
   update-results:
