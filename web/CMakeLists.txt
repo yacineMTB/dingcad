@@ -26,12 +26,13 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s MODULARIZE=1 -s EXPORT_NAME='createDi
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s FORCE_FILESYSTEM=1 -s ASSERTIONS=1")
 
 # Disable TBB for web build (not needed for single-threaded web)
+# Disable mesh export (requires assimp, not needed for web build)
 set(MANIFOLD_PAR OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_TEST OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_PYBIND OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_JSBIND OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_CROSS_SECTION OFF CACHE BOOL "" FORCE)
-set(MANIFOLD_EXPORT ON CACHE BOOL "" FORCE)
+set(MANIFOLD_EXPORT OFF CACHE BOOL "" FORCE)
 
 # Get the repository root (one level up from web directory)
 get_filename_component(REPO_ROOT "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
