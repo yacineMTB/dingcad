@@ -6,8 +6,8 @@ const componentSize = 8.8;
 const componentTotalHeight = 8.1;
 const smallComponentSize = 5.1;
 const smallComponentTotalHeight = 6.2;
-const connectorWidth = 5.0;
-const connectorDepth = 7.0;
+const connectorWidth = 6.0;
+const connectorDepth = 8.0;
 const connectorTotalHeight = 2.6;
 const connectorGapX = 0.4;
 
