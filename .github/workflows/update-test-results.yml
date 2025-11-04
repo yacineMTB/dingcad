@@ -1,0 +1,52 @@
+name: Update Test Results on Master
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  update-results:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            git \
+            libtbb-dev \
+            libraylib-dev \
+            jq
+      
+      - name: Initialize submodules
+        run: make init
+      
+      - name: Build project
+        run: make build
+      
+      - name: Run tests
+        run: make test
+        continue-on-error: true
+      
+      - name: Commit latest test results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add _/tests/results/latest/ _/tests/results/README.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update test results [skip ci]" || echo "No changes to commit"
+            git push || echo "Push failed or no changes"
+          fi
+

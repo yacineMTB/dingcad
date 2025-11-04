@@ -106,3 +106,7 @@ test-syntax: ## Check syntax of all test files
 	@echo "Checking test file syntax..."
 	@./_/tests/scripts/test_syntax.sh
 
+yacine: ## Sync fork with upstream (yacineMTB/dingcad) and create PR with test results
+	@echo "Syncing fork with upstream and creating PR..."
+	@./_/scripts/sync-fork-pr.sh
+

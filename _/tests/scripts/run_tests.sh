@@ -278,6 +278,51 @@ with open('$MARKDOWN_RESULTS', 'w') as f:
 
 PYTHON_SCRIPT
 
+# Copy latest results to 'latest' directory for GitHub viewing
+LATEST_DIR="$TEST_DIR/results/latest"
+mkdir -p "$LATEST_DIR"
+cp "$JSON_RESULTS" "$LATEST_DIR/results.json"
+cp "$MARKDOWN_RESULTS" "$LATEST_DIR/results.md"
+
+# Update results README with latest info
+RESULTS_README="$TEST_DIR/results/README.md"
+python3 <<PYTHON_SCRIPT
+import json
+from datetime import datetime
+
+with open('$JSON_RESULTS', 'r') as f:
+    data = json.load(f)
+
+pass_rate = (data['summary']['passed'] / data['summary']['total'] * 100) if data['summary']['total'] > 0 else 0.0
+status_emoji = "✅" if data['summary']['failed'] == 0 and data['summary']['passed'] > 0 else ("❌" if data['summary']['failed'] > 0 else "⚠️")
+
+with open('$RESULTS_README', 'w') as f:
+    f.write("# Test Results\n\n")
+    f.write("This directory contains test results for the DingCAD project.\n\n")
+    f.write("## Latest Test Results\n\n")
+    f.write("{} **Latest Run:** {}\n\n".format(status_emoji, data['timestamp']))
+    f.write("### Summary\n\n")
+    f.write("- **Total Tests:** {}\n".format(data['summary']['total']))
+    f.write("- **Passed:** {}\n".format(data['summary']['passed']))
+    f.write("- **Failed:** {}\n".format(data['summary']['failed']))
+    f.write("- **Skipped:** {}\n".format(data['summary']['skipped']))
+    f.write("- **Pass Rate:** {:.1f}%\n".format(pass_rate))
+    f.write("- **Duration:** {} seconds\n\n".format(data['summary']['duration']))
+    f.write("### View Latest Results\n\n")
+    f.write("- **[View Latest Results (Markdown)](latest/results.md)** - Full test report\n")
+    f.write("- **[View Latest Results (JSON)](latest/results.json)** - Machine-readable format\n\n")
+    f.write("### Historical Results\n\n")
+    f.write("Historical test results are stored in timestamped directories:\n\n")
+    f.write("```\n")
+    f.write("YYYYMMDD_HHMMSS/\n")
+    f.write("```\n\n")
+    f.write("Each directory contains:\n\n")
+    f.write("- `results.json` - Machine-readable test results\n")
+    f.write("- `results.md` - Human-readable test report\n\n")
+    f.write("---\n\n")
+    f.write("*Last updated: {}*\n".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')))
+PYTHON_SCRIPT
+
 # Summary
 echo ""
 echo "=== Test Summary ==="
@@ -290,6 +335,7 @@ echo ""
 echo "Results saved to:"
 echo "  JSON: $JSON_RESULTS"
 echo "  Markdown: $MARKDOWN_RESULTS"
+echo "  Latest: $LATEST_DIR/"
 
 # Cleanup
 rm -f /tmp/dingcad_test_$$.log

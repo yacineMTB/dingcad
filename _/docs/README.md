@@ -29,6 +29,14 @@ Architectural overview of the project:
 - Performance considerations
 - Extension points
 
+### [pr-integration.md](./pr-integration.md)
+Guide for integrating test results into pull requests:
+- Automatic PR message generation
+- GitHub Actions integration
+- Git hooks setup
+- CI/CD integration examples
+- Best practices
+
 ## Quick Reference
 
 ### Build Commands
