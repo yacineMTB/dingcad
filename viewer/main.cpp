@@ -9,8 +9,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <memory>
+#include <iostream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -30,6 +31,86 @@ const Color kBaseColor = {210, 210, 220, 255};
 const Color kWireColor = Fade(BLACK, 0.25f);
 const char *kBrandText = "dingcad";
 constexpr float kBrandFontSize = 28.0f;
+
+struct Vec3f {
+  float x;
+  float y;
+  float z;
+};
+
+Vec3f FetchVertex(const manifold::MeshGL &mesh, uint32_t index) {
+  const size_t offset = static_cast<size_t>(index) * mesh.numProp;
+  return {
+      static_cast<float>(mesh.vertProperties[offset + 0]),
+      static_cast<float>(mesh.vertProperties[offset + 1]),
+      static_cast<float>(mesh.vertProperties[offset + 2])
+  };
+}
+
+Vec3f Subtract(const Vec3f &a, const Vec3f &b) {
+  return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+Vec3f Cross(const Vec3f &a, const Vec3f &b) {
+  return {a.y * b.z - a.z * b.y,
+          a.z * b.x - a.x * b.z,
+          a.x * b.y - a.y * b.x};
+}
+
+Vec3f Normalize(const Vec3f &v) {
+  const float lenSq = v.x * v.x + v.y * v.y + v.z * v.z;
+  if (lenSq <= 0.0f) return {0.0f, 0.0f, 0.0f};
+  const float invLen = 1.0f / std::sqrt(lenSq);
+  return {v.x * invLen, v.y * invLen, v.z * invLen};
+}
+
+bool WriteMeshAsBinaryStl(const manifold::MeshGL &mesh,
+                          const std::filesystem::path &path,
+                          std::string &error) {
+  const uint32_t triCount = static_cast<uint32_t>(mesh.NumTri());
+  if (triCount == 0) {
+    error = "Export failed: mesh is empty";
+    return false;
+  }
+
+  std::ofstream out(path, std::ios::binary);
+  if (!out) {
+    error = "Export failed: cannot open " + path.string();
+    return false;
+  }
+
+  std::array<char, 80> header{};
+  constexpr const char kHeader[] = "dingcad export";
+  std::memcpy(header.data(), kHeader, std::min(header.size(), std::strlen(kHeader)));
+  out.write(header.data(), header.size());
+  out.write(reinterpret_cast<const char *>(&triCount), sizeof(uint32_t));
+
+  for (uint32_t tri = 0; tri < triCount; ++tri) {
+    const uint32_t i0 = mesh.triVerts[tri * 3 + 0];
+    const uint32_t i1 = mesh.triVerts[tri * 3 + 1];
+    const uint32_t i2 = mesh.triVerts[tri * 3 + 2];
+
+    const Vec3f v0 = FetchVertex(mesh, i0);
+    const Vec3f v1 = FetchVertex(mesh, i1);
+    const Vec3f v2 = FetchVertex(mesh, i2);
+
+    const Vec3f normal = Normalize(Cross(Subtract(v1, v0), Subtract(v2, v0)));
+
+    out.write(reinterpret_cast<const char *>(&normal), sizeof(Vec3f));
+    out.write(reinterpret_cast<const char *>(&v0), sizeof(Vec3f));
+    out.write(reinterpret_cast<const char *>(&v1), sizeof(Vec3f));
+    out.write(reinterpret_cast<const char *>(&v2), sizeof(Vec3f));
+    const uint16_t attr = 0;
+    out.write(reinterpret_cast<const char *>(&attr), sizeof(uint16_t));
+  }
+
+  if (!out) {
+    error = "Export failed: write error";
+    return false;
+  }
+
+  return true;
+}
 
 void DestroyModel(Model &model) {
   if (model.meshes != nullptr || model.materials != nullptr) {
@@ -144,9 +225,10 @@ Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
     chunkIndices.reserve(std::min(kMaxVerticesPerMesh, vertexCount) * 3);
 
     while (triIndex < triangleCount) {
-      const int indices[3] = {meshGL.triVerts[triIndex * 3 + 0],
-                              meshGL.triVerts[triIndex * 3 + 1],
-                              meshGL.triVerts[triIndex * 3 + 2]};
+      const int indices[3] = {
+          static_cast<int>(meshGL.triVerts[triIndex * 3 + 0]),
+          static_cast<int>(meshGL.triVerts[triIndex * 3 + 1]),
+          static_cast<int>(meshGL.triVerts[triIndex * 3 + 2])};
 
       int needed = 0;
       for (int j = 0; j < 3; ++j) {
@@ -379,6 +461,7 @@ int main() {
   auto reportStatus = [&](const std::string &message) {
     statusMessage = message;
     TraceLog(LOG_INFO, "%s", statusMessage.c_str());
+    std::cout << statusMessage << std::endl;
   };
   if (defaultScript) {
     scriptPath = *defaultScript;
@@ -437,6 +520,68 @@ int main() {
 
     if (IsKeyPressed(KEY_R) && !scriptPath.empty()) {
       reloadScene(true);
+    }
+
+    static bool prevPDown = false;
+    bool exportRequested = false;
+
+    for (int key = GetKeyPressed(); key != 0; key = GetKeyPressed()) {
+      TraceLog(LOG_INFO, "Key pressed: %d", key);
+      std::cout << "Key pressed: " << key << std::endl;
+      if (key == KEY_P) {
+        exportRequested = true;
+      }
+    }
+
+    for (int ch = GetCharPressed(); ch != 0; ch = GetCharPressed()) {
+      TraceLog(LOG_INFO, "Char pressed: %d", ch);
+      std::cout << "Char pressed: " << ch << std::endl;
+      if (ch == 'p' || ch == 'P') {
+        exportRequested = true;
+      }
+    }
+
+    const bool pDown = IsKeyDown(KEY_P);
+    if (pDown && !prevPDown) {
+      TraceLog(LOG_INFO, "P key down edge detected");
+      std::cout << "P key down edge detected" << std::endl;
+      exportRequested = true;
+    }
+    prevPDown = pDown;
+
+    if (!exportRequested && IsKeyPressed(KEY_P)) {
+      exportRequested = true;
+    }
+
+    if (exportRequested) {
+      TraceLog(LOG_INFO, "Export trigger detected");
+      std::cout << "Export trigger detected" << std::endl;
+      if (scene) {
+        std::filesystem::path downloads;
+        if (const char *home = std::getenv("HOME")) {
+          downloads = std::filesystem::path(home) / "Downloads";
+        } else {
+          downloads = std::filesystem::current_path();
+        }
+
+        std::error_code dirErr;
+        std::filesystem::create_directories(downloads, dirErr);
+        if (dirErr && !std::filesystem::exists(downloads)) {
+          reportStatus("Export failed: cannot access " + downloads.string());
+        } else {
+          std::filesystem::path savePath = downloads / "ding.stl";
+          std::string error;
+          const bool ok = WriteMeshAsBinaryStl(scene->GetMeshGL(), savePath, error);
+          TraceLog(LOG_INFO, "Export path: %s", savePath.string().c_str());
+          if (ok) {
+            reportStatus("Saved " + savePath.string());
+          } else {
+            reportStatus(error);
+          }
+        }
+      } else {
+        reportStatus("No scene loaded to export");
+      }
     }
 
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
@@ -502,6 +647,12 @@ int main() {
         static_cast<float>(GetScreenWidth()) - textSize.x - margin,
         margin};
     DrawTextEx(brandingFont, kBrandText, brandPos, kBrandFontSize, 0.0f, DARKGRAY);
+
+    if (!statusMessage.empty()) {
+      constexpr float statusFontSize = 18.0f;
+      const Vector2 statusPos = {margin, margin};
+      DrawTextEx(brandingFont, statusMessage.c_str(), statusPos, statusFontSize, 0.0f, DARKGRAY);
+    }
 
     EndDrawing();
   }
