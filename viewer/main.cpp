@@ -13,9 +13,11 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <vector>
 
 extern "C" {
@@ -41,9 +43,14 @@ struct Vec3f {
 
 struct ModuleLoaderData {
   std::filesystem::path baseDir;
+  std::set<std::filesystem::path> dependencies;
 };
 
 ModuleLoaderData g_module_loader_data;
+
+struct WatchedFile {
+  std::optional<std::filesystem::file_time_type> timestamp;
+};
 
 Vec3f FetchVertex(const manifold::MeshGL &mesh, uint32_t index) {
   const size_t offset = static_cast<size_t>(index) * mesh.numProp;
@@ -391,6 +398,7 @@ JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, voi
 
   if (data) {
     data->baseDir = resolved.parent_path();
+    data->dependencies.insert(resolved);
   }
 
   auto source = ReadTextFile(resolved);
@@ -415,6 +423,7 @@ struct LoadResult {
   bool success = false;
   std::shared_ptr<manifold::Manifold> manifold;
   std::string message;
+  std::vector<std::filesystem::path> dependencies;
 };
 
 LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path) {
@@ -424,14 +433,18 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     result.message = "Scene file not found: " + absolutePath.string();
     return result;
   }
+  g_module_loader_data.baseDir = absolutePath.parent_path();
+  g_module_loader_data.dependencies.clear();
+  g_module_loader_data.dependencies.insert(absolutePath);
   auto sourceOpt = ReadTextFile(absolutePath);
   if (!sourceOpt) {
     result.message = "Unable to read scene file: " + absolutePath.string();
+    result.dependencies.assign(g_module_loader_data.dependencies.begin(),
+                               g_module_loader_data.dependencies.end());
     return result;
   }
   JSContext *ctx = JS_NewContext(runtime);
   RegisterBindings(ctx);
-  g_module_loader_data.baseDir = absolutePath.parent_path();
 
   auto captureException = [&]() {
     JSValue exc = JS_GetException(ctx);
@@ -442,11 +455,16 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     JS_FreeValue(ctx, stack);
     JS_FreeValue(ctx, exc);
   };
+  auto assignDependencies = [&]() {
+    result.dependencies.assign(g_module_loader_data.dependencies.begin(),
+                               g_module_loader_data.dependencies.end());
+  };
 
   JSValue moduleFunc = JS_Eval(ctx, sourceOpt->c_str(), sourceOpt->size(), absolutePath.string().c_str(),
                                JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
   if (JS_IsException(moduleFunc)) {
     captureException();
+    assignDependencies();
     JS_FreeContext(ctx);
     return result;
   }
@@ -454,6 +472,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   if (JS_ResolveModule(ctx, moduleFunc) < 0) {
     captureException();
     JS_FreeValue(ctx, moduleFunc);
+    assignDependencies();
     JS_FreeContext(ctx);
     return result;
   }
@@ -462,6 +481,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   JSValue evalResult = JS_EvalFunction(ctx, moduleFunc);
   if (JS_IsException(evalResult)) {
     captureException();
+    assignDependencies();
     JS_FreeContext(ctx);
     return result;
   }
@@ -470,6 +490,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   JSValue moduleNamespace = JS_GetModuleNamespace(ctx, module);
   if (JS_IsException(moduleNamespace)) {
     captureException();
+    assignDependencies();
     JS_FreeContext(ctx);
     return result;
   }
@@ -478,6 +499,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   if (JS_IsException(sceneVal)) {
     JS_FreeValue(ctx, moduleNamespace);
     captureException();
+    assignDependencies();
     JS_FreeContext(ctx);
     return result;
   }
@@ -487,6 +509,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     JS_FreeValue(ctx, sceneVal);
     JS_FreeContext(ctx);
     result.message = "Scene module must export 'scene'";
+    assignDependencies();
     return result;
   }
 
@@ -495,12 +518,14 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     JS_FreeValue(ctx, sceneVal);
     JS_FreeContext(ctx);
     result.message = "Exported 'scene' is not a manifold";
+    assignDependencies();
     return result;
   }
 
   result.manifold = sceneHandle;
   result.success = true;
   result.message = "Loaded " + absolutePath.string();
+  assignDependencies();
   JS_FreeValue(ctx, sceneVal);
   JS_FreeContext(ctx);
   return result;
@@ -553,12 +578,25 @@ int main() {
   std::shared_ptr<manifold::Manifold> scene = nullptr;
   std::string statusMessage;
   std::filesystem::path scriptPath;
-  std::optional<std::filesystem::file_time_type> scriptTimestamp;
+  std::unordered_map<std::filesystem::path, WatchedFile> watchedFiles;
   auto defaultScript = FindDefaultScene();
   auto reportStatus = [&](const std::string &message) {
     statusMessage = message;
     TraceLog(LOG_INFO, "%s", statusMessage.c_str());
     std::cout << statusMessage << std::endl;
+  };
+  auto setWatchedFiles = [&](const std::vector<std::filesystem::path> &deps) {
+    std::unordered_map<std::filesystem::path, WatchedFile> updated;
+    for (const auto &dep : deps) {
+      WatchedFile entry;
+      std::error_code ec;
+      auto ts = std::filesystem::last_write_time(dep, ec);
+      if (!ec) {
+        entry.timestamp = ts;
+      }
+      updated.emplace(dep, entry);
+    }
+    watchedFiles = std::move(updated);
   };
   if (defaultScript) {
     scriptPath = std::filesystem::absolute(*defaultScript);
@@ -569,9 +607,9 @@ int main() {
     } else {
       reportStatus(load.message);
     }
-    std::error_code ec;
-    auto ts = std::filesystem::last_write_time(scriptPath, ec);
-    if (!ec) scriptTimestamp = ts;
+    if (!load.dependencies.empty()) {
+      setWatchedFiles(load.dependencies);
+    }
   }
   if (!scene) {
     manifold::Manifold cube = manifold::Manifold::Cube({2.0, 2.0, 2.0}, true);
@@ -588,7 +626,7 @@ int main() {
   while (!WindowShouldClose()) {
     const Vector2 mouseDelta = GetMouseDelta();
 
-    auto reloadScene = [&](bool updateTimestamp) {
+    auto reloadScene = [&]() {
       auto load = LoadSceneFromFile(runtime, scriptPath);
       if (load.success) {
         scene = load.manifold;
@@ -597,26 +635,34 @@ int main() {
       } else {
         reportStatus(load.message);
       }
-      if (updateTimestamp) {
-        std::error_code ec;
-        auto ts = std::filesystem::last_write_time(scriptPath, ec);
-        if (!ec) scriptTimestamp = ts;
+      if (!load.dependencies.empty()) {
+        setWatchedFiles(load.dependencies);
       }
     };
 
     if (!scriptPath.empty()) {
-      std::error_code ec;
-      auto currentTs = std::filesystem::last_write_time(scriptPath, ec);
-      if (!ec) {
-        if (!scriptTimestamp || currentTs != *scriptTimestamp) {
-          reloadScene(false);
-          scriptTimestamp = currentTs;
+      bool changed = false;
+      for (const auto &entry : watchedFiles) {
+        std::error_code ec;
+        auto currentTs = std::filesystem::last_write_time(entry.first, ec);
+        if (ec) {
+          if (entry.second.timestamp.has_value()) {
+            changed = true;
+            break;
+          }
+        } else if (!entry.second.timestamp.has_value() ||
+                   currentTs != *entry.second.timestamp) {
+          changed = true;
+          break;
         }
+      }
+      if (changed) {
+        reloadScene();
       }
     }
 
     if (IsKeyPressed(KEY_R) && !scriptPath.empty()) {
-      reloadScene(true);
+      reloadScene();
     }
 
     static bool prevPDown = false;

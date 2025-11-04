@@ -1,11 +1,12 @@
 // the back case of a radio; with cylinders that allow for m2 bolts to go through to the end. the box has rounded corners on the outside, making it look spic and span
+// basically, a box to hide my PCB slop
 
 const plateWidth = 62;
 const plateHeight = 42;
 const plateThickness = 3;
 const cornerRadius = 3;
 
-const wallHeight = 10;
+const wallHeight = 30;
 const wallThickness = 2;
 
 const holeDiameter = 2.2; // M2 clearance

@@ -10,3 +10,7 @@ git submodule update --init --recursive
 
 This repository is mostly autonomously written by an LLM that I've lazily prompted while watching youtube and hanging out with my family.
 
+There are no docs. Just read the code.
+
+
+
