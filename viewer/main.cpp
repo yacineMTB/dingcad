@@ -39,6 +39,12 @@ struct Vec3f {
   float z;
 };
 
+struct ModuleLoaderData {
+  std::filesystem::path baseDir;
+};
+
+ModuleLoaderData g_module_loader_data;
+
 Vec3f FetchVertex(const manifold::MeshGL &mesh, uint32_t index) {
   const size_t offset = static_cast<size_t>(index) * mesh.numProp;
   return {
@@ -372,6 +378,39 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path &path) {
   return ss.str();
 }
 
+JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, void *opaque) {
+  auto *data = static_cast<ModuleLoaderData *>(opaque);
+  std::filesystem::path resolved(module_name);
+  if (resolved.is_relative()) {
+    const std::filesystem::path base = data && !data->baseDir.empty()
+                                           ? data->baseDir
+                                           : std::filesystem::current_path();
+    resolved = base / resolved;
+  }
+  resolved = std::filesystem::absolute(resolved).lexically_normal();
+
+  if (data) {
+    data->baseDir = resolved.parent_path();
+  }
+
+  auto source = ReadTextFile(resolved);
+  if (!source) {
+    JS_ThrowReferenceError(ctx, "Unable to load module '%s'", resolved.string().c_str());
+    return nullptr;
+  }
+
+  const std::string moduleName = resolved.string();
+  JSValue funcVal = JS_Eval(ctx, source->c_str(), source->size(), moduleName.c_str(),
+                            JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+  if (JS_IsException(funcVal)) {
+    return nullptr;
+  }
+
+  auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(funcVal));
+  JS_FreeValue(ctx, funcVal);
+  return module;
+}
+
 struct LoadResult {
   bool success = false;
   std::shared_ptr<manifold::Manifold> manifold;
@@ -380,19 +419,21 @@ struct LoadResult {
 
 LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path) {
   LoadResult result;
-  if (!std::filesystem::exists(path)) {
-    result.message = "Scene file not found: " + path.string();
+  const auto absolutePath = std::filesystem::absolute(path);
+  if (!std::filesystem::exists(absolutePath)) {
+    result.message = "Scene file not found: " + absolutePath.string();
     return result;
   }
-  auto sourceOpt = ReadTextFile(path);
+  auto sourceOpt = ReadTextFile(absolutePath);
   if (!sourceOpt) {
-    result.message = "Unable to read scene file: " + path.string();
+    result.message = "Unable to read scene file: " + absolutePath.string();
     return result;
   }
   JSContext *ctx = JS_NewContext(runtime);
   RegisterBindings(ctx);
-  JSValue evalResult = JS_Eval(ctx, sourceOpt->c_str(), sourceOpt->size(), path.string().c_str(), JS_EVAL_TYPE_GLOBAL);
-  if (JS_IsException(evalResult)) {
+  g_module_loader_data.baseDir = absolutePath.parent_path();
+
+  auto captureException = [&]() {
     JSValue exc = JS_GetException(ctx);
     JSValue stack = JS_GetPropertyStr(ctx, exc, "stack");
     const char *stackStr = JS_ToCString(ctx, JS_IsUndefined(stack) ? exc : stack);
@@ -400,31 +441,66 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     JS_FreeCString(ctx, stackStr);
     JS_FreeValue(ctx, stack);
     JS_FreeValue(ctx, exc);
-    JS_FreeValue(ctx, evalResult);
+  };
+
+  JSValue moduleFunc = JS_Eval(ctx, sourceOpt->c_str(), sourceOpt->size(), absolutePath.string().c_str(),
+                               JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+  if (JS_IsException(moduleFunc)) {
+    captureException();
+    JS_FreeContext(ctx);
+    return result;
+  }
+
+  if (JS_ResolveModule(ctx, moduleFunc) < 0) {
+    captureException();
+    JS_FreeValue(ctx, moduleFunc);
+    JS_FreeContext(ctx);
+    return result;
+  }
+
+  auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(moduleFunc));
+  JSValue evalResult = JS_EvalFunction(ctx, moduleFunc);
+  if (JS_IsException(evalResult)) {
+    captureException();
     JS_FreeContext(ctx);
     return result;
   }
   JS_FreeValue(ctx, evalResult);
 
-  JSValue global = JS_GetGlobalObject(ctx);
-  JSValue sceneVal = JS_GetPropertyStr(ctx, global, "scene");
-  JS_FreeValue(ctx, global);
+  JSValue moduleNamespace = JS_GetModuleNamespace(ctx, module);
+  if (JS_IsException(moduleNamespace)) {
+    captureException();
+    JS_FreeContext(ctx);
+    return result;
+  }
+
+  JSValue sceneVal = JS_GetPropertyStr(ctx, moduleNamespace, "scene");
+  if (JS_IsException(sceneVal)) {
+    JS_FreeValue(ctx, moduleNamespace);
+    captureException();
+    JS_FreeContext(ctx);
+    return result;
+  }
+  JS_FreeValue(ctx, moduleNamespace);
+
   if (JS_IsUndefined(sceneVal)) {
     JS_FreeValue(ctx, sceneVal);
     JS_FreeContext(ctx);
-    result.message = "Scene script must assign global 'scene'";
+    result.message = "Scene module must export 'scene'";
     return result;
   }
+
   auto sceneHandle = GetManifoldHandle(ctx, sceneVal);
   if (!sceneHandle) {
     JS_FreeValue(ctx, sceneVal);
     JS_FreeContext(ctx);
-    result.message = "Global 'scene' is not a manifold";
+    result.message = "Exported 'scene' is not a manifold";
     return result;
   }
+
   result.manifold = sceneHandle;
   result.success = true;
-  result.message = "Loaded " + path.string();
+  result.message = "Loaded " + absolutePath.string();
   JS_FreeValue(ctx, sceneVal);
   JS_FreeContext(ctx);
   return result;
@@ -472,6 +548,7 @@ int main() {
 
   JSRuntime *runtime = JS_NewRuntime();
   EnsureManifoldClass(runtime);
+  JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
 
   std::shared_ptr<manifold::Manifold> scene = nullptr;
   std::string statusMessage;
@@ -484,7 +561,7 @@ int main() {
     std::cout << statusMessage << std::endl;
   };
   if (defaultScript) {
-    scriptPath = *defaultScript;
+    scriptPath = std::filesystem::absolute(*defaultScript);
     auto load = LoadSceneFromFile(runtime, scriptPath);
     if (load.success) {
       scene = load.manifold;
