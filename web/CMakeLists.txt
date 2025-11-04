@@ -36,8 +36,8 @@ set(MANIFOLD_EXPORT ON CACHE BOOL "" FORCE)
 # Get the repository root (one level up from web directory)
 get_filename_component(REPO_ROOT "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
 
-# Add manifold subdirectory
-add_subdirectory(${REPO_ROOT}/vendor/manifold EXCLUDE_FROM_ALL)
+# Add manifold subdirectory (specify binary dir for out-of-tree source)
+add_subdirectory(${REPO_ROOT}/vendor/manifold ${CMAKE_BINARY_DIR}/vendor/manifold EXCLUDE_FROM_ALL)
 
 # Build QuickJS for web
 add_library(dingcad_quickjs STATIC
