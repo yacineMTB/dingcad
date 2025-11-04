@@ -31,6 +31,7 @@ const Color kBaseColor = {210, 210, 220, 255};
 const Color kWireColor = Fade(BLACK, 0.25f);
 const char *kBrandText = "dingcad";
 constexpr float kBrandFontSize = 28.0f;
+constexpr float kSceneScale = 0.1f;  // convert mm scene units to renderer units
 
 struct Vec3f {
   float x;
@@ -132,9 +133,11 @@ Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
   std::vector<Vector3> positions(vertexCount);
   for (int v = 0; v < vertexCount; ++v) {
     const int base = v * stride;
-    positions[v] = {meshGL.vertProperties[base + 0],
-                    meshGL.vertProperties[base + 1],
-                    meshGL.vertProperties[base + 2]};
+    // Convert from the scene's Z-up coordinates to raylib's Y-up system.
+    const float cadX = meshGL.vertProperties[base + 0] * kSceneScale;
+    const float cadY = meshGL.vertProperties[base + 1] * kSceneScale;
+    const float cadZ = meshGL.vertProperties[base + 2] * kSceneScale;
+    positions[v] = {cadX, cadZ, -cadY};
   }
 
   std::vector<Vector3> accum(vertexCount, {0.0f, 0.0f, 0.0f});
@@ -318,10 +321,27 @@ Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
 }
 
 void DrawAxes(float length) {
-  const Vector3 origin = {0.0f, 0.0f, 0.0f};
-  DrawLine3D(origin, {length, 0.0f, 0.0f}, RED);
-  DrawLine3D(origin, {0.0f, length, 0.0f}, GREEN);
-  DrawLine3D(origin, {0.0f, 0.0f, length}, BLUE);
+  const float shaftRadius = std::max(length * 0.02f, 0.01f);
+  const float headLength = std::min(length * 0.2f, length * 0.75f);
+  const float headRadius = shaftRadius * 2.5f;
+
+  auto drawAxis = [&](Vector3 direction, Color color) {
+    const Vector3 origin = {0.0f, 0.0f, 0.0f};
+    const float shaftLength = std::max(length - headLength, 0.0f);
+    const Vector3 shaftEnd = Vector3Scale(direction, shaftLength);
+    const Vector3 axisEnd = Vector3Scale(direction, length);
+
+    if (shaftLength > 0.0f) {
+      DrawCylinderEx(origin, shaftEnd, shaftRadius, shaftRadius, 12, Fade(color, 0.65f));
+    }
+    DrawCylinderEx(shaftEnd, axisEnd, headRadius, 0.0f, 16, color);
+  };
+
+  drawAxis({1.0f, 0.0f, 0.0f}, RED);    // +X
+  drawAxis({0.0f, 1.0f, 0.0f}, GREEN);  // +Y
+  drawAxis({0.0f, 0.0f, 1.0f}, BLUE);   // +Z
+
+  DrawSphereEx({0.0f, 0.0f, 0.0f}, shaftRadius * 1.2f, 12, 12, LIGHTGRAY);
 }
 
 void DrawXZGrid(int halfLines, float spacing, Color color) {
