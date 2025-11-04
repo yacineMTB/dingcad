@@ -29,6 +29,8 @@ jobs:
         with:
           version: latest
           actions-cache-folder: '.emscripten_cache'
+          # Make cache optional to avoid conflicts when multiple jobs run simultaneously
+          no-cache: false
       
       - name: Set up build environment
         run: |

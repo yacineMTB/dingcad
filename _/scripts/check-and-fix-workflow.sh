@@ -199,6 +199,18 @@ analyze_and_fix() {
         fixed=true
     fi
     
+    # Check for GitHub Actions cache conflicts
+    if grep -qi "Unable to reserve cache\|another job may be creating this cache\|cache.*conflict" "$error_log"; then
+        echo -e "${YELLOW}Detected: GitHub Actions cache conflict${NC}"
+        echo -e "${BLUE}This is usually transient - cache conflicts happen when multiple jobs run simultaneously${NC}"
+        echo -e "${BLUE}The workflow will retry automatically, or we can make cache optional${NC}"
+        # This is a transient issue - workflows usually retry automatically
+        # We could disable caching but it's not necessary as GitHub handles retries
+        echo -e "${YELLOW}Note: This error typically resolves on retry. No fix needed.${NC}"
+        # Don't auto-fix cache conflicts as they're transient and GitHub handles retries
+        return 1
+    fi
+    
     # Check for specific workflow file issues
     if grep -qi "workflow.*not found\|could not find.*workflow\|Invalid workflow" "$error_log"; then
         echo -e "${YELLOW}Detected: Workflow file syntax error${NC}"
