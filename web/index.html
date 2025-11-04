@@ -189,6 +189,9 @@
         // Initialize Emscripten module
         async function initModule() {
             try {
+                // Get canvas element before module creation (needed for GLFW initialization)
+                const canvas = document.getElementById('canvas');
+                
                 // Load the WebAssembly module
                 // With EXPORT_ES6=1 and EXPORT_NAME='createDingCADModule', the module exports:
                 // - default export: the factory function (preferred)
@@ -203,20 +206,35 @@
                         `Available exports: ${availableExports}`
                     );
                 }
-                Module = await createModule();
                 
-                // Set up canvas
-                const canvas = document.getElementById('canvas');
-                Module.canvas = canvas;
+                // Create module with configuration (canvas must be set before GLFW init)
+                Module = await createModule({
+                    canvas: canvas,
+                    onRuntimeInitialized: function() {
+                        // Runtime is ready, now call main
+                        Module.callMain();
+                        
+                        // Hide loading, show canvas
+                        document.getElementById('loading').style.display = 'none';
+                        isInitialized = true;
+                        
+                        updateStatus('Ready', 'success');
+                    },
+                    print: function(text) {
+                        console.log(text);
+                    },
+                    printErr: function(text) {
+                        console.error(text);
+                    }
+                });
                 
-                // Initialize the viewer
-                Module.callMain();
-                
-                // Hide loading, show canvas
-                document.getElementById('loading').style.display = 'none';
-                isInitialized = true;
-                
-                updateStatus('Ready', 'success');
+                // If runtime already initialized (synchronous case), call main immediately
+                if (Module.ready) {
+                    Module.callMain();
+                    document.getElementById('loading').style.display = 'none';
+                    isInitialized = true;
+                    updateStatus('Ready', 'success');
+                }
             } catch (error) {
                 console.error('Failed to initialize:', error);
                 updateStatus('Failed to load: ' + error.message, 'error');
