@@ -57,13 +57,32 @@ echo -e "${BLUE}Upstream branch: ${UPSTREAM_BRANCH}${NC}"
 SYNC_BRANCH="sync-with-upstream-$(date +%Y%m%d)"
 echo -e "${BLUE}Creating sync branch: ${SYNC_BRANCH}${NC}"
 
+# Check for uncommitted changes
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo -e "${YELLOW}Uncommitted changes detected. Stashing...${NC}"
+    git stash push -m "Auto-stash before sync: $(date +%Y%m%d_%H%M%S)"
+    STASHED=true
+else
+    STASHED=false
+fi
+
 # Check if branch exists locally
 if git show-ref --verify --quiet refs/heads/"$SYNC_BRANCH"; then
     echo -e "${YELLOW}Branch ${SYNC_BRANCH} already exists. Switching to it...${NC}"
-    git checkout "$SYNC_BRANCH"
+    git checkout "$SYNC_BRANCH" || {
+        echo -e "${RED}Failed to checkout branch. Trying to reset...${NC}"
+        git branch -D "$SYNC_BRANCH"
+        git checkout -b "$SYNC_BRANCH" upstream/"$UPSTREAM_BRANCH"
+    }
     git reset --hard upstream/"$UPSTREAM_BRANCH"
 else
     git checkout -b "$SYNC_BRANCH" upstream/"$UPSTREAM_BRANCH"
+fi
+
+# Restore stashed changes if we stashed
+if [ "$STASHED" = true ]; then
+    echo -e "${BLUE}Restoring stashed changes...${NC}"
+    git stash pop || echo -e "${YELLOW}Note: Some stashed changes may have conflicts${NC}"
 fi
 
 # Merge or rebase current changes
@@ -85,12 +104,15 @@ make test || {
 }
 
 # Generate PR message
-echo -e "${BLUE}Generating PR message...${NC}"
+echo -e "${BLUE}Generating PR message with test results...${NC}"
 PR_BODY_FILE="/tmp/pr_body_$$.md"
-./_/tests/scripts/generate_pr_message.sh > "$PR_BODY_FILE"
+
+# Generate base PR message with test results
+"$PROJECT_ROOT/_/tests/scripts/generate_pr_message.sh" > "$PR_BODY_FILE"
 
 # Add additional context to PR body
 cat >> "$PR_BODY_FILE" <<EOF
+
 
 ---
 
@@ -100,21 +122,45 @@ This PR syncs the fork with the upstream repository (\`yacineMTB/dingcad\`).
 
 ### Changes Included
 
-- Synced with upstream \`${UPSTREAM_BRANCH}\` branch
-- Merged local changes from \`${CURRENT_BRANCH}\`
-- All tests run and results included above
+- ✅ Synced with upstream \`${UPSTREAM_BRANCH}\` branch
+- ✅ Merged local changes from \`${CURRENT_BRANCH}\`
+- ✅ All tests run and results included above
 
 ### How to Review
 
-1. Check test results in the summary above
-2. Review [latest test results](_/tests/results/latest/results.md)
-3. Verify sync was successful
+1. **Check test results** in the summary above
+2. **Review [latest test results](_/tests/results/latest/results.md)** for detailed breakdown
+3. **Verify sync** was successful by reviewing commits
+4. **Check file changes** - Review the diff to see what changed
 
-### Next Steps
+### Test Results Location
 
-After merging:
-- Update local \`${CURRENT_BRANCH}\` branch: \`git checkout ${CURRENT_BRANCH} && git merge ${SYNC_BRANCH}\`
+- **Latest Results:** [\`_/tests/results/latest/\`](_/tests/results/latest/)
+- **Full Report:** [results.md](_/tests/results/latest/results.md)
+- **JSON Data:** [results.json](_/tests/results/latest/results.json)
+
+### Next Steps After Merge
+
+Once merged, update your local branch:
+\`\`\`bash
+git checkout ${CURRENT_BRANCH}
+git merge ${SYNC_BRANCH}
+\`\`\`
+
+---
+
+*This PR was automatically generated using \`make yacine\`*
 EOF
+
+echo -e "${GREEN}✓ PR description generated${NC}"
+echo ""
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}PR Description Preview (first 25 lines):${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+head -25 "$PR_BODY_FILE"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${YELLOW}Full description ($(wc -l < "$PR_BODY_FILE") lines) saved to: ${PR_BODY_FILE}${NC}"
+echo ""
 
 # Check if there are changes to commit
 if git diff --quiet && git diff --cached --quiet; then
@@ -207,4 +253,10 @@ echo -e "${GREEN}✓ Sync and PR creation complete!${NC}"
 echo ""
 echo "To switch back to your original branch:"
 echo "  git checkout ${CURRENT_BRANCH}"
+if [ "$STASHED" = true ]; then
+    echo ""
+    echo -e "${YELLOW}Note: Your uncommitted changes were stashed.${NC}"
+    echo "To view stashes:  git stash list"
+    echo "To restore:       git stash pop"
+fi
 

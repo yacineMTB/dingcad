@@ -4,7 +4,7 @@ This directory contains test results for the DingCAD project.
 
 ## Latest Test Results
 
-⚠️ **Latest Run:** 2025-11-04T18:33:13Z
+⚠️ **Latest Run:** 2025-11-04T18:46:40Z
 
 ### Summary
 
@@ -13,7 +13,7 @@ This directory contains test results for the DingCAD project.
 - **Failed:** 0
 - **Skipped:** 10
 - **Pass Rate:** 0.0%
-- **Duration:** 1 seconds
+- **Duration:** 0 seconds
 
 ### View Latest Results
 
@@ -33,4 +33,4 @@ Each directory contains:
 
 ---
 
-*Last updated: 2025-11-04 13:33:14 UTC*
+*Last updated: 2025-11-04 13:46:40 UTC*

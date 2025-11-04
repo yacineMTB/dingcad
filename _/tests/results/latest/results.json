@@ -1,11 +1,11 @@
 {
-  "timestamp": "2025-11-04T18:33:13Z",
+  "timestamp": "2025-11-04T18:46:40Z",
   "summary": {
     "total": 10,
     "passed": 0,
     "failed": 0,
     "skipped": 10,
-    "duration": 1
+    "duration": 0
   },
   "tests": [
     {
