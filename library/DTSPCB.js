@@ -6,10 +6,14 @@ const componentSize = 8.8;
 const componentTotalHeight = 8.1;
 const smallComponentSize = 5.1;
 const smallComponentTotalHeight = 6.2;
-const connectorWidth = 2.5;
-const connectorDepth = 3.5;
+const connectorWidth = 5.0;
+const connectorDepth = 7.0;
 const connectorTotalHeight = 2.6;
 const connectorGapX = 0.4;
+
+export function buildDTSPCBBoard() {
+  return cube({ size: [pcbWidth, pcbHeight, pcbThickness], center: false });
+}
 
 export function buildDTSPCB() {
   const pcb = cube({ size: [pcbWidth, pcbHeight, pcbThickness], center: false });
@@ -25,7 +29,7 @@ export function buildDTSPCB() {
   );
 
   const smallComponentHeight = smallComponentTotalHeight - pcbThickness; // total height from PCB bottom is 6.2mm
-  const smallGapX = 0.3;
+  const smallGapX = 1.4;
   const smallOverlapX = 0.2; // extend to overlap the larger block slightly
   const smallComponentLength = smallComponentSize + smallGapX + smallOverlapX;
   const smallOffsetX = componentOffsetX - smallGapX - smallComponentSize;
@@ -37,7 +41,7 @@ export function buildDTSPCB() {
   );
 
   const connectorHeight = connectorTotalHeight - pcbThickness; // keeps top flush with connectorTotalHeight
-  const connectorOffsetX = componentOffsetX + componentSize + connectorGapX;
+  const connectorOffsetX = Math.min(componentOffsetX + componentSize + connectorGapX, pcbWidth - connectorWidth);
   const connectorOffsetY = componentOffsetY + componentSize / 2 - connectorDepth / 2;
 
   const connector = translate(
