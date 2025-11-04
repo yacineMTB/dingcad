@@ -33,20 +33,23 @@ set(MANIFOLD_JSBIND OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_CROSS_SECTION OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_EXPORT ON CACHE BOOL "" FORCE)
 
+# Get the repository root (one level up from web directory)
+get_filename_component(REPO_ROOT "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
+
 # Add manifold subdirectory
-add_subdirectory(${CMAKE_SOURCE_DIR}/vendor/manifold EXCLUDE_FROM_ALL)
+add_subdirectory(${REPO_ROOT}/vendor/manifold EXCLUDE_FROM_ALL)
 
 # Build QuickJS for web
 add_library(dingcad_quickjs STATIC
-  ${CMAKE_SOURCE_DIR}/vendor/quickjs/quickjs.c
-  ${CMAKE_SOURCE_DIR}/vendor/quickjs/quickjs-libc.c
-  ${CMAKE_SOURCE_DIR}/vendor/quickjs/cutils.c
-  ${CMAKE_SOURCE_DIR}/vendor/quickjs/libunicode.c
-  ${CMAKE_SOURCE_DIR}/vendor/quickjs/libregexp.c
-  ${CMAKE_SOURCE_DIR}/vendor/quickjs/dtoa.c
+  ${REPO_ROOT}/vendor/quickjs/quickjs.c
+  ${REPO_ROOT}/vendor/quickjs/quickjs-libc.c
+  ${REPO_ROOT}/vendor/quickjs/cutils.c
+  ${REPO_ROOT}/vendor/quickjs/libunicode.c
+  ${REPO_ROOT}/vendor/quickjs/libregexp.c
+  ${REPO_ROOT}/vendor/quickjs/dtoa.c
 )
 
-target_include_directories(dingcad_quickjs PUBLIC ${CMAKE_SOURCE_DIR}/vendor/quickjs)
+target_include_directories(dingcad_quickjs PUBLIC ${REPO_ROOT}/vendor/quickjs)
 set_target_properties(dingcad_quickjs PROPERTIES LINKER_LANGUAGE C)
 
 # Raylib for web - use Emscripten port
@@ -88,14 +91,14 @@ endif()
 
 # Main viewer executable for web
 add_executable(dingcad_viewer_web
-  ${CMAKE_SOURCE_DIR}/viewer/main.cpp
-  ${CMAKE_SOURCE_DIR}/viewer/js_bindings.cpp
+  ${REPO_ROOT}/viewer/main.cpp
+  ${REPO_ROOT}/viewer/js_bindings.cpp
 )
 
 target_include_directories(dingcad_viewer_web
   PRIVATE
-    ${CMAKE_SOURCE_DIR}/vendor/manifold/include
-    ${CMAKE_SOURCE_DIR}/vendor/quickjs
+    ${REPO_ROOT}/vendor/manifold/include
+    ${REPO_ROOT}/vendor/quickjs
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
