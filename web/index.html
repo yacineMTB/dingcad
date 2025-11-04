@@ -190,8 +190,20 @@
         async function initModule() {
             try {
                 // Load the WebAssembly module
+                // With EXPORT_ES6=1 and EXPORT_NAME='createDingCADModule', the module exports:
+                // - default export: the factory function (preferred)
+                // - named export 'createDingCADModule': the factory function (fallback)
                 const moduleFactory = await import('./dingcad_viewer.js');
-                Module = await moduleFactory.default();
+                const createModule = moduleFactory.default || moduleFactory.createDingCADModule;
+                if (typeof createModule !== 'function') {
+                    const availableExports = Object.keys(moduleFactory).join(', ') || 'none';
+                    throw new Error(
+                        `Module factory function not found. ` +
+                        `Expected default or createDingCADModule export. ` +
+                        `Available exports: ${availableExports}`
+                    );
+                }
+                Module = await createModule();
                 
                 // Set up canvas
                 const canvas = document.getElementById('canvas');
