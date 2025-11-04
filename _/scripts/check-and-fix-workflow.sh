@@ -30,8 +30,12 @@ if ! gh auth status &> /dev/null; then
     exit 1
 fi
 
-# Get repository info
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+# Get repository info from git remote
+REPO=$(git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/]([^/]+\/[^/]+)(\.git)?$/\1/' | sed 's/\.git$//' | head -1)
+if [ -z "$REPO" ]; then
+    # Fallback to gh CLI
+    REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+fi
 if [ -z "$REPO" ]; then
     echo -e "${RED}✗ Could not determine repository. Are you in a git repository?${NC}"
     exit 1
@@ -43,9 +47,9 @@ echo ""
 # Function to get latest workflow run
 get_latest_workflow() {
     if [ -n "$WORKFLOW_NAME" ]; then
-        gh run list --workflow="$WORKFLOW_NAME" --limit 1 --json databaseId,status,conclusion,name,headBranch --jq '.[0]'
+        gh run list --repo "$REPO" --workflow="$WORKFLOW_NAME" --limit 1 --json databaseId,status,conclusion,name,headBranch --jq '.[0]'
     else
-        gh run list --limit 1 --json databaseId,status,conclusion,name,headBranch --jq '.[0]'
+        gh run list --repo "$REPO" --limit 1 --json databaseId,status,conclusion,name,headBranch --jq '.[0]'
     fi
 }
 
@@ -59,7 +63,7 @@ wait_for_completion() {
     echo -e "${YELLOW}Waiting for workflow to complete...${NC}"
     
     while [ $elapsed -lt $max_wait ]; do
-        local status=$(gh run view "$run_id" --json status -q .status 2>/dev/null || echo "unknown")
+        local status=$(gh run view --repo "$REPO" "$run_id" --json status -q .status 2>/dev/null || echo "unknown")
         
         if [ "$status" = "completed" ]; then
             return 0
@@ -85,7 +89,7 @@ get_workflow_logs() {
     local job_name=$2
     
     # Get failed job logs
-    gh run view "$run_id" --log-failed > /tmp/workflow_error.log 2>&1 || true
+    gh run view --repo "$REPO" "$run_id" --log-failed > /tmp/workflow_error.log 2>&1 || true
     
     if [ -f /tmp/workflow_error.log ]; then
         cat /tmp/workflow_error.log
@@ -277,7 +281,7 @@ while [ $attempt -le $MAX_ATTEMPTS ]; do
     if [ "$status" != "completed" ]; then
         if wait_for_completion "$run_id"; then
             # Re-fetch status
-            conclusion=$(gh run view "$run_id" --json conclusion -q .conclusion)
+            conclusion=$(gh run view --repo "$REPO" "$run_id" --json conclusion -q .conclusion)
         else
             echo -e "${RED}Workflow did not complete${NC}"
             exit 1
