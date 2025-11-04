@@ -549,10 +549,37 @@ int main() {
 
   Font brandingFont = GetFontDefault();
   bool brandingFontCustom = false;
-  const std::filesystem::path consolasPath("/System/Library/Fonts/Supplemental/Consolas.ttf");
-  if (std::filesystem::exists(consolasPath)) {
-    brandingFont = LoadFontEx(consolasPath.string().c_str(), static_cast<int>(kBrandFontSize), nullptr, 0);
-    brandingFontCustom = true;
+  
+  // Try to load Consolas font from common system locations (cross-platform)
+  std::vector<std::filesystem::path> fontPaths = {
+    // macOS
+    "/System/Library/Fonts/Supplemental/Consolas.ttf",
+    "/Library/Fonts/Consolas.ttf",
+    // Windows (common locations)
+    "C:/Windows/Fonts/consola.ttf",
+    "C:/Windows/Fonts/consolab.ttf",
+    "C:/Windows/Fonts/consolai.ttf",
+    "C:/Windows/Fonts/consolaz.ttf",
+    // Linux (common locations)
+    "/usr/share/fonts/truetype/consola/Consola.ttf",
+    "/usr/share/fonts/TTF/Consolas.ttf",
+    "/usr/local/share/fonts/Consolas.ttf",
+  };
+  
+  // Also check environment-specific font directories
+  if (const char *home = std::getenv("HOME")) {
+    std::filesystem::path homePath(home);
+    fontPaths.push_back(homePath / ".fonts" / "Consolas.ttf");
+    fontPaths.push_back(homePath / ".local" / "share" / "fonts" / "Consolas.ttf");
+  }
+  
+  // Try to load the first available font
+  for (const auto &fontPath : fontPaths) {
+    if (std::filesystem::exists(fontPath)) {
+      brandingFont = LoadFontEx(fontPath.string().c_str(), static_cast<int>(kBrandFontSize), nullptr, 0);
+      brandingFontCustom = true;
+      break;
+    }
   }
 
   Camera3D camera = {0};
