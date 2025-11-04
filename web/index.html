@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DingCAD - Web Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+        
+        #container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #canvas-container {
+            flex: 1;
+            position: relative;
+            background: #0f0f0f;
+        }
+        
+        #canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        #toolbar {
+            background: #2a2a2a;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            border-top: 1px solid #3a3a3a;
+        }
+        
+        #editor-container {
+            width: 100%;
+            height: 100%;
+            display: none;
+            flex-direction: column;
+        }
+        
+        #editor-container.active {
+            display: flex;
+        }
+        
+        #editor {
+            flex: 1;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: none;
+            padding: 15px;
+            resize: none;
+            tab-size: 2;
+        }
+        
+        button {
+            background: #4a4a4a;
+            color: #e0e0e0;
+            border: 1px solid #5a5a5a;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #5a5a5a;
+        }
+        
+        button:active {
+            background: #3a3a3a;
+        }
+        
+        button.primary {
+            background: #0066cc;
+            border-color: #0077dd;
+        }
+        
+        button.primary:hover {
+            background: #0077dd;
+        }
+        
+        #status {
+            flex: 1;
+            padding: 8px 15px;
+            background: #2a2a2a;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #a0a0a0;
+        }
+        
+        #status.error {
+            color: #ff6b6b;
+        }
+        
+        #status.success {
+            color: #51cf66;
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #888;
+        }
+        
+        .spinner {
+            border: 3px solid #333;
+            border-top: 3px solid #0066cc;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        #commit-info {
+            font-size: 11px;
+            color: #666;
+            margin-left: auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div>Loading DingCAD...</div>
+            </div>
+            <canvas id="canvas"></canvas>
+        </div>
+        
+        <div id="editor-container">
+            <textarea id="editor" spellcheck="false"></textarea>
+            <div id="toolbar">
+                <button id="run-btn" class="primary">Run Code</button>
+                <button id="clear-btn">Clear</button>
+                <button id="example-btn">Load Example</button>
+                <div id="status">Ready</div>
+                <button id="close-editor-btn">Close Editor</button>
+            </div>
+        </div>
+        
+        <div id="toolbar">
+            <button id="edit-btn">Edit Code</button>
+            <button id="reset-btn">Reset View</button>
+            <div id="status">Ready</div>
+            <div id="commit-info"></div>
+        </div>
+    </div>
+    
+    <script type="module">
+        // Module loader and initialization
+        let Module = null;
+        let isInitialized = false;
+        
+        // Get commit info from URL or default
+        const urlParams = new URLSearchParams(window.location.search);
+        const commitSha = urlParams.get('commit') || 'master';
+        
+        // Update commit info display
+        document.getElementById('commit-info').textContent = `Commit: ${commitSha.substring(0, 7)}`;
+        
+        // Initialize Emscripten module
+        async function initModule() {
+            try {
+                // Load the WebAssembly module
+                const moduleFactory = await import('./dingcad_viewer.js');
+                Module = await moduleFactory.default();
+                
+                // Set up canvas
+                const canvas = document.getElementById('canvas');
+                Module.canvas = canvas;
+                
+                // Initialize the viewer
+                Module.callMain();
+                
+                // Hide loading, show canvas
+                document.getElementById('loading').style.display = 'none';
+                isInitialized = true;
+                
+                updateStatus('Ready', 'success');
+            } catch (error) {
+                console.error('Failed to initialize:', error);
+                updateStatus('Failed to load: ' + error.message, 'error');
+            }
+        }
+        
+        function updateStatus(message, type = '') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = type;
+        }
+        
+        // Editor functionality
+        document.getElementById('edit-btn').addEventListener('click', () => {
+            document.getElementById('editor-container').classList.add('active');
+            loadDefaultScene();
+        });
+        
+        document.getElementById('close-editor-btn').addEventListener('click', () => {
+            document.getElementById('editor-container').classList.remove('active');
+        });
+        
+        document.getElementById('run-btn').addEventListener('click', () => {
+            const code = document.getElementById('editor').value;
+            if (Module && Module.ccall) {
+                try {
+                    Module.ccall('loadSceneFromCode', null, ['string'], [code]);
+                    updateStatus('Scene loaded successfully', 'success');
+                } catch (error) {
+                    updateStatus('Error: ' + error.message, 'error');
+                }
+            }
+        });
+        
+        document.getElementById('clear-btn').addEventListener('click', () => {
+            document.getElementById('editor').value = '';
+        });
+        
+        document.getElementById('example-btn').addEventListener('click', () => {
+            loadExample();
+        });
+        
+        document.getElementById('reset-btn').addEventListener('click', () => {
+            if (Module && Module.ccall) {
+                Module.ccall('resetCamera', null, [], []);
+            }
+        });
+        
+        function loadDefaultScene() {
+            // Load default scene.js content
+            fetch('./scene.js')
+                .then(r => r.text())
+                .then(text => {
+                    document.getElementById('editor').value = text;
+                })
+                .catch(() => {
+                    document.getElementById('editor').value = getDefaultSceneCode();
+                });
+        }
+        
+        function loadExample() {
+            document.getElementById('editor').value = getExampleCode();
+        }
+        
+        function getDefaultSceneCode() {
+            return `// DingCAD Scene
+// Export a 'scene' variable with your 3D model
+
+const cube = cube({size: [10, 10, 10]});
+const sphere = sphere({radius: 5});
+
+scene = cube + sphere;
+`;
+        }
+        
+        function getExampleCode() {
+            return `// Example: Creating a simple mechanical part
+const base = cube({size: [20, 5, 20]});
+const hole = cylinder({radius: 3, height: 10}).translate([10, 0, 10]);
+
+scene = base - hole;
+`;
+        }
+        
+        // Initialize on page load
+        initModule();
+    </script>
+</body>
+</html>
+

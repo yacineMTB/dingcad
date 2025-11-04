@@ -110,3 +110,16 @@ yacine: ## Sync fork with upstream (yacineMTB/dingcad) and create PR with test r
 	@echo "Syncing fork with upstream and creating PR..."
 	@./_/scripts/sync-fork-pr.sh
 
+web: ## Build WebAssembly version for browser (requires Emscripten)
+	@echo "Building WebAssembly version..."
+	@if ! command -v emcc &> /dev/null; then \
+		echo "✗ Emscripten not found. Install: https://emscripten.org/docs/getting_started/downloads.html"; \
+		exit 1; \
+	fi
+	@mkdir -p build-web
+	@cd build-web && source $$EMSDK/emsdk_env.sh 2>/dev/null || true && \
+		emcmake cmake ../web && \
+		emmake make -j$$(nproc)
+	@echo "✓ Web build complete: build-web/dingcad_viewer.js"
+	@echo "  Serve with: cd build-web && python3 -m http.server 8000"
+

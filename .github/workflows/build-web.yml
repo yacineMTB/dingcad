@@ -1,0 +1,121 @@
+name: Build Web Version
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to build (optional, defaults to current commit)'
+        required: false
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
+      
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v13
+        with:
+          version: 3.1.45
+          actions-cache-folder: '.emscripten_cache'
+      
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            git \
+            libtbb-dev \
+            jq \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxinerama-dev
+      
+      - name: Build Raylib for Web
+        run: |
+          source $EMSDK/emsdk_env.sh
+          cd /tmp
+          git clone --depth 1 --branch 5.0 https://github.com/raysan5/raylib.git
+          cd raylib/src
+          # Build raylib for web using Emscripten
+          emmake make PLATFORM=PLATFORM_WEB -j$(nproc) || {
+            # Alternative: Use raylib's CMake with Emscripten
+            cd ..
+            mkdir build-web && cd build-web
+            emcmake cmake .. -DBUILD_SHARED_LIBS=OFF -DPLATFORM=Web
+            emmake make -j$(nproc)
+            export RAYLIB_DIR=$(pwd)
+          }
+      
+      - name: Initialize submodules
+        run: make init
+      
+      - name: Build WebAssembly version
+        run: |
+          mkdir -p build-web
+          cd build-web
+          source $EMSDK/emsdk_env.sh
+          emcmake cmake ../web -DCMAKE_BUILD_TYPE=Release
+          emmake make -j$(nproc)
+      
+      - name: Prepare web assets
+        run: |
+          mkdir -p web-dist
+          cp build-web/dingcad_viewer.js web-dist/
+          cp build-web/dingcad_viewer.wasm web-dist/
+          cp build-web/dingcad_viewer.wasm.map web-dist/ || true
+          cp web/index.html web-dist/
+          cp scene.js web-dist/ || echo "// Default scene\nconst cube = cube({size: [10, 10, 10]});\nscene = cube;" > web-dist/scene.js
+          
+          # Create commit-specific version
+          COMMIT_SHA=$(git rev-parse HEAD)
+          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          mkdir -p web-dist/commits/${COMMIT_SHORT}
+          cp web-dist/*.{js,wasm,html} web-dist/commits/${COMMIT_SHORT}/ 2>/dev/null || true
+          
+          # Create index with commit info
+          cat > web-dist/index.html <<EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>DingCAD Web Viewer - Commit ${COMMIT_SHORT}</title>
+            <meta http-equiv="refresh" content="0; url=./commits/${COMMIT_SHORT}/index.html?commit=${COMMIT_SHA}">
+          </head>
+          <body>
+            <p>Redirecting to <a href="./commits/${COMMIT_SHORT}/index.html?commit=${COMMIT_SHA}">commit ${COMMIT_SHORT}</a>...</p>
+          </body>
+          </html>
+          EOF
+      
+      - name: Upload web artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build-${{ github.sha }}
+          path: web-dist/
+          retention-days: 30
+      
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./web-dist
+          destination_dir: ./
+          keep_files: true
+          commit_message: 'Deploy web build for commit ${{ github.sha }}'
+
