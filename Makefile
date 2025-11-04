@@ -123,3 +123,11 @@ web: ## Build WebAssembly version for browser (requires Emscripten)
 	@echo "✓ Web build complete: build-web/dingcad_viewer.js"
 	@echo "  Serve with: cd build-web && python3 -m http.server 8000"
 
+check-workflow: ## Check latest GitHub Actions workflow status and auto-fix errors
+	@echo "Checking GitHub Actions workflow status..."
+	@./_/scripts/check-and-fix-workflow.sh
+
+check-workflow-web: ## Check and fix web build workflow specifically
+	@echo "Checking web build workflow..."
+	@./_/scripts/check-and-fix-workflow.sh "Build Web Version"
+
