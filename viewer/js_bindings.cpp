@@ -3,6 +3,9 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -10,8 +13,15 @@
 
 #include "manifold/manifold.h"
 #include "manifold/polygon.h"
-
+#include "manifold/meshIO.h"
 namespace {
+
+void PrintLoadMeshError(const std::string &message) {
+  const char esc = 0x1B;
+  std::fprintf(stderr, "%c[31m%s%c[0m\n", esc, message.c_str(), esc);
+  std::fflush(stderr);
+}
+
 
 struct JsManifold {
   std::shared_ptr<manifold::Manifold> handle;
@@ -977,6 +987,85 @@ JSValue JsBooleanOp(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) 
   return WrapManifold(ctx, std::move(manifold));
 }
 
+JSValue JsLoadMesh(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
+  if (argc < 1) {
+    return JS_ThrowTypeError(ctx, "loadMesh expects (path[, forceCleanup])");
+  }
+  const char *pathStr = JS_ToCString(ctx, argv[0]);
+  if (!pathStr) return JS_EXCEPTION;
+  std::string path(pathStr);
+  JS_FreeCString(ctx, pathStr);
+
+  std::filesystem::path fsPath;
+  if (!path.empty() && path[0] == '~') {
+    const char *home = std::getenv("HOME");
+    if (!home) {
+      const std::string msg = "loadMesh: HOME is not set; cannot resolve '~'";
+      PrintLoadMeshError(msg);
+      return JS_ThrowInternalError(ctx, "%s", msg.c_str());
+    }
+    std::filesystem::path homePath(home);
+    if (path.size() == 1) {
+      fsPath = homePath;
+    } else if (path[1] == '/') {
+      fsPath = homePath / path.substr(2);
+    } else {
+      fsPath = homePath / path.substr(1);
+    }
+  } else {
+    fsPath = std::filesystem::path(path);
+  }
+
+  std::error_code ec;
+  if (!fsPath.is_absolute()) {
+    auto absPath = std::filesystem::absolute(fsPath, ec);
+    if (ec) {
+      const std::string msg = "loadMesh: unable to resolve path '" + path + "'";
+      PrintLoadMeshError(msg);
+      return JS_ThrowInternalError(ctx, "loadMesh: unable to resolve path '%s'", path.c_str());
+    }
+    fsPath = absPath;
+  }
+  const std::string resolvedPath = fsPath.string();
+
+  if (!std::filesystem::exists(fsPath, ec) || ec) {
+    const std::string msg = "loadMesh: file not found '" + resolvedPath + "' (expected in ~/Downloads/models)";
+    PrintLoadMeshError(msg);
+    return JS_ThrowInternalError(ctx, "loadMesh: file not found '%s'", resolvedPath.c_str());
+  }
+  if (!std::filesystem::is_regular_file(fsPath, ec) || ec) {
+    const std::string msg = "loadMesh: not a regular file '" + resolvedPath + "'";
+    PrintLoadMeshError(msg);
+    return JS_ThrowInternalError(ctx, "loadMesh: not a regular file '%s'", resolvedPath.c_str());
+  }
+
+  bool forceCleanup = false;
+  if (argc >= 2 && !JS_IsUndefined(argv[1])) {
+    int flag = JS_ToBool(ctx, argv[1]);
+    if (flag < 0) return JS_EXCEPTION;
+    forceCleanup = flag == 1;
+  }
+
+  try {
+    manifold::MeshGL mesh = manifold::ImportMesh(fsPath.string(), forceCleanup);
+    if (mesh.NumTri() == 0 || mesh.NumVert() == 0) {
+      const std::string msg = "loadMesh: imported mesh is empty for '" + resolvedPath + "'";
+      PrintLoadMeshError(msg);
+      return JS_ThrowInternalError(ctx, "loadMesh: imported mesh is empty");
+    }
+    manifold::Manifold manifold(mesh);
+    auto handle = std::make_shared<manifold::Manifold>(std::move(manifold));
+    return WrapManifold(ctx, std::move(handle));
+  } catch (const std::exception &e) {
+    const std::string msg = std::string("loadMesh failed: ") + e.what();
+    PrintLoadMeshError(msg);
+    return JS_ThrowInternalError(ctx, "loadMesh failed: %s", e.what());
+  }
+}
+
+
+
+
 JSValue JsLevelSet(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
   if (argc < 1 || !JS_IsObject(argv[0])) {
     return JS_ThrowTypeError(ctx, "levelSet expects options object");
@@ -1296,6 +1385,8 @@ void RegisterBindingsInternal(JSContext *ctx) {
                     JS_NewCFunction(ctx, JsBatchBoolean, "batchBoolean", 2));
   JS_SetPropertyStr(ctx, global, "levelSet",
                     JS_NewCFunction(ctx, JsLevelSet, "levelSet", 1));
+  JS_SetPropertyStr(ctx, global, "loadMesh",
+                    JS_NewCFunction(ctx, JsLoadMesh, "loadMesh", 2));
   JS_SetPropertyStr(ctx, global, "asOriginal",
                     JS_NewCFunction(ctx, JsAsOriginal, "asOriginal", 1));
   JS_SetPropertyStr(ctx, global, "originalId",

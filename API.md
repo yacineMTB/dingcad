@@ -25,6 +25,7 @@
 - slice{manifold, height?:number}
 - project{manifold}
 - levelSet{options:{sdf(point:[x,y,z])=>number, bounds:{min:[x,y,z], max:[x,y,z]}, edgeLength:number, level?:number, tolerance?:number}}
+- loadMesh{path:string, forceCleanup?:bool}
 - setTolerance{manifold, tolerance}
 - getTolerance{manifold}
 - simplify{manifold, tolerance?}
