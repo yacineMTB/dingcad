@@ -82,17 +82,92 @@ fi
 # Restore stashed changes if we stashed
 if [ "$STASHED" = true ]; then
     echo -e "${BLUE}Restoring stashed changes...${NC}"
-    git stash pop || echo -e "${YELLOW}Note: Some stashed changes may have conflicts${NC}"
+    if ! git stash pop; then
+        echo -e "${YELLOW}Stash conflicts detected. Resolving automatically...${NC}"
+        
+        # Handle modify/delete conflicts - keep our modified files (workflow files we want to keep)
+        git status --porcelain | grep "^UD" | awk '{print $2}' | while read file; do
+            if [ -f "$file" ]; then
+                echo -e "${GREEN}Keeping our version: $file${NC}"
+                git add "$file"
+            fi
+        done
+        
+        # Handle delete/modify conflicts - keep our deleted state if file doesn't exist
+        git status --porcelain | grep "^DU" | awk '{print $2}' | while read file; do
+            if [ ! -f "$file" ]; then
+                echo -e "${GREEN}Keeping deletion: $file${NC}"
+                git rm "$file" 2>/dev/null || true
+            fi
+        done
+        
+        # Check if there are still conflicts
+        if git status --porcelain | grep -q "^UU\|^AA"; then
+            echo -e "${YELLOW}Some conflicts remain. Attempting to resolve...${NC}"
+            # For workflow files, keep our version
+            git status --porcelain | grep "^UU\|^AA" | awk '{print $2}' | while read file; do
+                if [[ "$file" == *.yml ]] || [[ "$file" == *.yaml ]] || [[ "$file" == .github/* ]]; then
+                    echo -e "${BLUE}Resolving conflict in: $file (keeping our version)${NC}"
+                    git checkout --ours "$file" 2>/dev/null || true
+                    git add "$file" 2>/dev/null || true
+                fi
+            done
+        fi
+        
+        # Final check
+        if git status --porcelain | grep -q "^UU\|^AA"; then
+            echo -e "${RED}Unable to automatically resolve all conflicts.${NC}"
+            echo -e "${YELLOW}Remaining conflicts:${NC}"
+            git status --porcelain | grep "^UU\|^AA"
+            echo ""
+            echo -e "${YELLOW}Aborting. Please resolve conflicts manually and run again.${NC}"
+            echo "Use: git status to see conflicts, then git add <file> to resolve"
+            exit 1
+        else
+            echo -e "${GREEN}✓ All conflicts resolved${NC}"
+        fi
+    fi
+fi
+
+# Check for and resolve any remaining merge conflicts before proceeding
+if git status --porcelain | grep -q "^UU\|^AA"; then
+    echo -e "${YELLOW}Resolving remaining conflicts...${NC}"
+    git status --porcelain | grep "^UU\|^AA" | awk '{print $2}' | while read file; do
+        if [[ "$file" == *.yml ]] || [[ "$file" == .github/* ]] || [[ "$file" == _/* ]]; then
+            echo -e "${BLUE}Keeping our version: $file${NC}"
+            git checkout --ours "$file" 2>/dev/null || true
+            git add "$file" 2>/dev/null || true
+        fi
+    done
 fi
 
 # Merge or rebase current changes
 if [ "$CURRENT_BRANCH" != "$SYNC_BRANCH" ]; then
     echo -e "${BLUE}Checking for local changes to merge...${NC}"
-    if [ -n "$(git diff "$CURRENT_BRANCH" --stat)" ]; then
+    
+    # Skip merge if there are unmerged files
+    if git status --porcelain | grep -q "^UU\|^AA"; then
+        echo -e "${YELLOW}Unresolved conflicts detected. Resolving...${NC}"
+        git status --porcelain | grep "^UU\|^AA" | awk '{print $2}' | while read file; do
+            git checkout --ours "$file" 2>/dev/null && git add "$file" 2>/dev/null || true
+        done
+    fi
+    
+    if [ -n "$(git diff "$CURRENT_BRANCH" --stat 2>/dev/null)" ]; then
         echo -e "${YELLOW}Found local changes. Merging...${NC}"
         git merge "$CURRENT_BRANCH" --no-edit || {
-            echo -e "${RED}Merge conflict detected. Please resolve manually.${NC}"
-            exit 1
+            echo -e "${RED}Merge conflict detected. Attempting to resolve...${NC}"
+            # Try to resolve conflicts automatically
+            git status --porcelain | grep "^UU\|^AA" | awk '{print $2}' | while read file; do
+                if [[ "$file" == *.yml ]] || [[ "$file" == .github/* ]] || [[ "$file" == _/* ]]; then
+                    git checkout --ours "$file" 2>/dev/null && git add "$file" 2>/dev/null || true
+                fi
+            done
+            # If still conflicts, fail
+            if git status --porcelain | grep -q "^UU\|^AA"; then
+                echo -e "${RED}Unable to resolve all conflicts automatically. Please resolve manually.${NC}"
+                exit 1
+            fi
         }
     fi
 fi
