@@ -67,18 +67,30 @@ target_compile_options(dingcad_quickjs PRIVATE
 if(RAYLIB_DIR)
     message(STATUS "Using Raylib from: ${RAYLIB_DIR}")
     # Raylib built with Emscripten creates libraylib.a in the build directory
-    # Also check for libraylib.a explicitly
+    # Check multiple possible locations
     if(EXISTS "${RAYLIB_DIR}/libraylib.a")
         set(RAYLIB_LIB "${RAYLIB_DIR}/libraylib.a")
         message(STATUS "Found Raylib library at: ${RAYLIB_LIB}")
+    elseif(EXISTS "${RAYLIB_DIR}/raylib/libraylib.a")
+        set(RAYLIB_LIB "${RAYLIB_DIR}/raylib/libraylib.a")
+        message(STATUS "Found Raylib library at: ${RAYLIB_LIB}")
     else()
-        find_library(RAYLIB_LIB 
-            NAMES raylib libraylib
-            PATHS ${RAYLIB_DIR} ${RAYLIB_DIR}/src ${RAYLIB_DIR}/lib
-            NO_DEFAULT_PATH
-        )
-        if(RAYLIB_LIB)
+        # Search for the library file
+        file(GLOB_RECURSE RAYLIB_LIB_CANDIDATES "${RAYLIB_DIR}/*/libraylib.a" "${RAYLIB_DIR}/libraylib.a")
+        if(RAYLIB_LIB_CANDIDATES)
+            list(GET RAYLIB_LIB_CANDIDATES 0 RAYLIB_LIB)
             message(STATUS "Found Raylib library at: ${RAYLIB_LIB}")
+        else()
+            find_library(RAYLIB_LIB 
+                NAMES raylib libraylib
+                PATHS ${RAYLIB_DIR} ${RAYLIB_DIR}/raylib ${RAYLIB_DIR}/src ${RAYLIB_DIR}/lib
+                NO_DEFAULT_PATH
+            )
+            if(RAYLIB_LIB)
+                message(STATUS "Found Raylib library at: ${RAYLIB_LIB}")
+            else()
+                message(WARNING "Could not find libraylib.a in ${RAYLIB_DIR}")
+            endif()
         endif()
     endif()
     
@@ -125,9 +137,17 @@ target_link_libraries(dingcad_viewer_web
 
 # Link Raylib if found
 if(RAYLIB_LIB)
+    message(STATUS "Linking against Raylib: ${RAYLIB_LIB}")
+    # Add the directory containing the library to link directories
+    get_filename_component(RAYLIB_LIB_DIR "${RAYLIB_LIB}" DIRECTORY)
+    target_link_directories(dingcad_viewer_web PRIVATE ${RAYLIB_LIB_DIR})
     target_link_libraries(dingcad_viewer_web PRIVATE ${RAYLIB_LIB})
 else()
-    # Try to link via Emscripten port
+    # Try to add raylib directory to link path and use library name
+    if(RAYLIB_DIR)
+        target_link_directories(dingcad_viewer_web PRIVATE ${RAYLIB_DIR} ${RAYLIB_DIR}/raylib)
+    endif()
+    # Try to link via Emscripten port or library name
     target_link_libraries(dingcad_viewer_web PRIVATE raylib)
 endif()
 
