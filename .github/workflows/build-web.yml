@@ -28,8 +28,7 @@ jobs:
         uses: mymindstorm/setup-emsdk@v13
         with:
           version: latest
-          actions-cache-folder: '.emscripten_cache'
-          # Make cache optional to avoid conflicts when multiple jobs run simultaneously
+          # Disable caching to avoid conflicts when multiple jobs run simultaneously
           no-cache: true
       
       - name: Set up build environment
