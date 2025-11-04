@@ -2,6 +2,11 @@
 #include "raymath.h"
 #include "rlgl.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -401,6 +406,18 @@ void DrawXZGrid(int halfLines, float spacing, Color color) {
 }
 
 std::optional<std::filesystem::path> FindDefaultScene() {
+#ifdef __EMSCRIPTEN__
+  // For web, look in virtual filesystem
+  const char* virtualPaths[] = {"/scene.js", "/home/scene.js"};
+  for (const char* vpath : virtualPaths) {
+    FILE* test = fopen(vpath, "r");
+    if (test) {
+      fclose(test);
+      return std::filesystem::path(vpath);
+    }
+  }
+  return std::nullopt;
+#else
   auto cwdCandidate = std::filesystem::current_path() / "scene.js";
   if (std::filesystem::exists(cwdCandidate)) return cwdCandidate;
   if (const char *home = std::getenv("HOME")) {
@@ -408,14 +425,28 @@ std::optional<std::filesystem::path> FindDefaultScene() {
     if (std::filesystem::exists(homeCandidate)) return homeCandidate;
   }
   return std::nullopt;
+#endif
 }
 
 std::optional<std::string> ReadTextFile(const std::filesystem::path &path) {
+#ifdef __EMSCRIPTEN__
+  // Use Emscripten's virtual filesystem for web
+  FILE* file = fopen(path.string().c_str(), "r");
+  if (!file) return std::nullopt;
+  std::string content;
+  char buffer[4096];
+  while (fgets(buffer, sizeof(buffer), file)) {
+    content += buffer;
+  }
+  fclose(file);
+  return content;
+#else
   std::ifstream file(path);
   if (!file) return std::nullopt;
   std::ostringstream ss;
   ss << file.rdbuf();
   return ss.str();
+#endif
 }
 
 JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, void *opaque) {
@@ -708,7 +739,8 @@ int main() {
   float outlineThickness = 0.02f;  // tweak to taste; ~2 cm if 1 unit == 1 m
   Color outlineColor = BLACK;
 
-  while (!WindowShouldClose()) {
+  // Main loop function - extracted for both desktop and web
+  auto mainLoop = [&]() {
     const Vector2 mouseDelta = GetMouseDelta();
 
     auto reloadScene = [&]() {
@@ -725,6 +757,8 @@ int main() {
       }
     };
 
+#ifndef __EMSCRIPTEN__
+    // File watching only works on desktop, not in browser
     if (!scriptPath.empty()) {
       bool changed = false;
       for (const auto &entry : watchedFiles) {
@@ -745,6 +779,7 @@ int main() {
         reloadScene();
       }
     }
+#endif
 
     if (IsKeyPressed(KEY_R) && !scriptPath.empty()) {
       reloadScene();
@@ -785,6 +820,32 @@ int main() {
       TraceLog(LOG_INFO, "Export trigger detected");
       std::cout << "Export trigger detected" << std::endl;
       if (scene) {
+#ifdef __EMSCRIPTEN__
+        // For web, save to virtual filesystem and trigger download
+        std::filesystem::path savePath = "/ding.stl";
+        std::string error;
+        const bool ok = WriteMeshAsBinaryStl(scene->GetMeshGL(), savePath, error);
+        if (ok) {
+          // Use Emscripten's file download API
+          EM_ASM({
+            const filename = UTF8ToString($0);
+            const path = UTF8ToString($1);
+            const data = FS.readFile(path, {encoding: 'binary'});
+            const blob = new Blob([data], {type: 'application/octet-stream'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, "ding.stl", savePath.string().c_str());
+          reportStatus("Downloaded ding.stl");
+        } else {
+          reportStatus(error);
+        }
+#else
         std::filesystem::path downloads;
         if (const char *home = std::getenv("HOME")) {
           downloads = std::filesystem::path(home) / "Downloads";
@@ -807,6 +868,7 @@ int main() {
             reportStatus(error);
           }
         }
+#endif
       } else {
         reportStatus("No scene loaded to export");
       }
@@ -903,6 +965,21 @@ int main() {
     }
 
     EndDrawing();
+  };
+
+#ifdef __EMSCRIPTEN__
+  // Use Emscripten's main loop for web
+  emscripten_set_main_loop_arg([](void* arg) {
+    auto* loop = static_cast<decltype(mainLoop)*>(arg);
+    (*loop)();
+  }, &mainLoop, 0, 1);
+  
+  // Cleanup will be handled by browser - don't unload here
+  return 0;
+#else
+  // Desktop main loop
+  while (!WindowShouldClose()) {
+    mainLoop();
   }
 
   UnloadMaterial(outlineMat);   // also releases the shader
@@ -914,4 +991,5 @@ int main() {
   CloseWindow();
 
   return 0;
+#endif
 }

@@ -49,9 +49,42 @@ add_library(dingcad_quickjs STATIC
 target_include_directories(dingcad_quickjs PUBLIC ${CMAKE_SOURCE_DIR}/vendor/quickjs)
 set_target_properties(dingcad_quickjs PROPERTIES LINKER_LANGUAGE C)
 
-# Raylib for web - we'll need to build it with Emscripten
-# For now, we'll link against system raylib (if built for web) or use Emscripten port
-# The build will need raylib compiled for web separately
+# Raylib for web - use Emscripten port
+# Raylib will be built separately in the GitHub Actions workflow
+if(RAYLIB_DIR)
+    message(STATUS "Using Raylib from: ${RAYLIB_DIR}")
+    # Raylib built with Emscripten creates libraylib.a in the build directory
+    # Also check for libraylib.a explicitly
+    if(EXISTS "${RAYLIB_DIR}/libraylib.a")
+        set(RAYLIB_LIB "${RAYLIB_DIR}/libraylib.a")
+        message(STATUS "Found Raylib library at: ${RAYLIB_LIB}")
+    else()
+        find_library(RAYLIB_LIB 
+            NAMES raylib libraylib
+            PATHS ${RAYLIB_DIR} ${RAYLIB_DIR}/src ${RAYLIB_DIR}/lib
+            NO_DEFAULT_PATH
+        )
+        if(RAYLIB_LIB)
+            message(STATUS "Found Raylib library at: ${RAYLIB_LIB}")
+        endif()
+    endif()
+    
+    # Find include directory - Raylib headers are in the source directory
+    if(RAYLIB_SRC_DIR)
+        set(RAYLIB_INCLUDE_DIR "${RAYLIB_SRC_DIR}/src")
+        message(STATUS "Using Raylib source dir for headers: ${RAYLIB_INCLUDE_DIR}")
+    else()
+        find_path(RAYLIB_INCLUDE_DIR raylib.h
+            PATHS ${RAYLIB_DIR}/../src ${RAYLIB_DIR}/../include ${RAYLIB_DIR}/src
+            NO_DEFAULT_PATH
+        )
+        if(RAYLIB_INCLUDE_DIR)
+            message(STATUS "Found Raylib headers at: ${RAYLIB_INCLUDE_DIR}")
+        endif()
+    endif()
+else()
+    message(WARNING "RAYLIB_DIR not set, will try to find Raylib via standard paths")
+endif()
 
 # Main viewer executable for web
 add_executable(dingcad_viewer_web
@@ -66,11 +99,24 @@ target_include_directories(dingcad_viewer_web
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# Add Raylib include directory if found
+if(RAYLIB_INCLUDE_DIR)
+    target_include_directories(dingcad_viewer_web PRIVATE ${RAYLIB_INCLUDE_DIR})
+endif()
+
 target_link_libraries(dingcad_viewer_web
   PRIVATE
     manifold
     dingcad_quickjs
 )
+
+# Link Raylib if found
+if(RAYLIB_LIB)
+    target_link_libraries(dingcad_viewer_web PRIVATE ${RAYLIB_LIB})
+else()
+    # Try to link via Emscripten port
+    target_link_libraries(dingcad_viewer_web PRIVATE raylib)
+endif()
 
 # Set output name
 set_target_properties(dingcad_viewer_web PROPERTIES

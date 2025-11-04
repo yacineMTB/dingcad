@@ -27,7 +27,7 @@ jobs:
       - name: Set up Emscripten
         uses: mymindstorm/setup-emsdk@v13
         with:
-          version: 3.1.45
+          version: latest
           actions-cache-folder: '.emscripten_cache'
       
       - name: Set up build environment
@@ -50,17 +50,18 @@ jobs:
         run: |
           source $EMSDK/emsdk_env.sh
           cd /tmp
-          git clone --depth 1 --branch 5.0 https://github.com/raysan5/raylib.git
-          cd raylib/src
-          # Build raylib for web using Emscripten
-          emmake make PLATFORM=PLATFORM_WEB -j$(nproc) || {
-            # Alternative: Use raylib's CMake with Emscripten
-            cd ..
-            mkdir build-web && cd build-web
-            emcmake cmake .. -DBUILD_SHARED_LIBS=OFF -DPLATFORM=Web
-            emmake make -j$(nproc)
-            export RAYLIB_DIR=$(pwd)
-          }
+          git clone --depth 1 --branch 5.0 https://github.com/raysan5/raylib.git raylib-src
+          cd raylib-src
+          mkdir build-web && cd build-web
+          emcmake cmake .. \
+            -DPLATFORM=Web \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          emmake make -j$(nproc)
+          # Store the path for later use (build directory contains the library)
+          echo "RAYLIB_WEB_DIR=$(pwd)" >> $GITHUB_ENV
+          echo "RAYLIB_SRC_DIR=$(pwd)/.." >> $GITHUB_ENV
       
       - name: Initialize submodules
         run: make init
@@ -70,8 +71,11 @@ jobs:
           mkdir -p build-web
           cd build-web
           source $EMSDK/emsdk_env.sh
-          emcmake cmake ../web -DCMAKE_BUILD_TYPE=Release
-          emmake make -j$(nproc)
+          emcmake cmake ../web \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DRAYLIB_DIR=${{ env.RAYLIB_WEB_DIR }} \
+            -DRAYLIB_SRC_DIR=${{ env.RAYLIB_SRC_DIR }}
+          emmake make -j$(nproc) VERBOSE=1
       
       - name: Prepare web assets
         run: |
