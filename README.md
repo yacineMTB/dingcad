@@ -1,16 +1,33 @@
-## Dingcad
+# Dingcad
 
-Dingcad is a live reloading program that is a replacement for openscad. Becuase openscad kind of really sucks. Try ./run.sh and then updating scene.js
+**Dingcad** is a live-reloading alternative to OpenSCAD—because, let’s face it, OpenSCAD kind of really sucks. With Dingcad, development is interactive and fast.
 
-This is dingcad. Dependencies: raylib, manifoldcad, and quickjs. Ask an LLM how to set up raylib on your system. For the quickjs and manifoldcad; you can 
+## Getting Started
 
-```
+1. Clone the repo, then run:
+
+   ```bash
+   ./run.sh
+   ```
+
+2. Edit `scene.js` and watch your changes update live.
+
+## Dependencies
+
+- **raylib**
+- **manifoldcad**
+- **quickjs**
+
+To set up **raylib** on your system, consult an LLM (or your favorite search engine).  
+For **quickjs** and **manifoldcad**, just run:
+
+```bash
 git submodule update --init --recursive
 ```
 
-This repository is mostly autonomously written by an LLM that I've lazily prompted while watching youtube and hanging out with my family.
+## Notes
 
-There are no docs. Just read the code.
+- This repository is mostly written autonomously by an LLM, prompted while I watch YouTube and hang out with my family.
+- There are no docs. Just read the code.
 
-
-
+Enjoy hacking!
