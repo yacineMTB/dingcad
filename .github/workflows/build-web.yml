@@ -107,11 +107,11 @@ jobs:
           cp scene.js web-dist/ || echo "// Default scene\nconst cube = cube({size: [10, 10, 10]});\nscene = cube;" > web-dist/scene.js
           
           # Copy library files and manifest
-          if [ -d "library" ]; then
-            cp -r library web-dist/library
+          if [ -d "_/library" ]; then
+            cp -r _/library web-dist/library
             echo "✓ Copied library folder"
           else
-            echo "⚠ Warning: library folder not found"
+            echo "⚠ Warning: _/library folder not found"
           fi
           
           if [ -f "_/config/library-manifest.json" ]; then
