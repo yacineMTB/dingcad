@@ -13,3 +13,19 @@ target_include_directories(js_bindings_smoke
 )
 
 add_test(NAME js_bindings_smoke COMMAND js_bindings_smoke)
+
+add_executable(js_bindings_geometry
+  js_bindings_geometry.cpp
+)
+
+target_link_libraries(js_bindings_geometry
+  PRIVATE
+    dingcad_bindings
+)
+
+target_include_directories(js_bindings_geometry
+  PRIVATE
+    ${PROJECT_SOURCE_DIR}/viewer
+)
+
+add_test(NAME js_bindings_geometry COMMAND js_bindings_geometry)
