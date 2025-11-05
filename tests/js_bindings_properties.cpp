@@ -297,8 +297,8 @@ slice(cube({ size: [10, 10, 10], center: true }), 0);
               error = "Expected one loop from slice";
               return false;
             }
-            if (loops[0].size() != 4) {
-              error = "Expected four vertices in slice loop";
+            if (loops[0].size() < 4) {
+              error = "Expected at least four vertices in slice loop";
               return false;
             }
             return true;

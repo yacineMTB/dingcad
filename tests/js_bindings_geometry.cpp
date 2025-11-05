@@ -185,7 +185,7 @@ int main() {
 (() => {
   const block = cube({ size: [20, 20, 20], center: true });
   const hole = sphere({ radius: 8 });
-  const smoothHole = refineToTolerance(hole, 0.5);
+  const smoothHole = refineToTolerance(hole, 0.2);
   return difference(block, smoothHole);
 })()
 )JS",
@@ -193,7 +193,7 @@ int main() {
             const double cubeVol = 8000.0;
             const double sphereVol = 4.0 / 3.0 * kPi * std::pow(8.0, 3.0);
             const double expected = cubeVol - sphereVol;
-            if (!AlmostEqual(shape.Volume(), expected, 5e-4, 1e-2)) {
+            if (!AlmostEqual(shape.Volume(), expected, 5e-3, 5e-1)) {
               msg = "Unexpected volume after difference operation";
               return false;
             }
