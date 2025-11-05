@@ -1300,6 +1300,10 @@ const char* getStatusMessage() {
   return g_state.statusMessage->c_str();
 }
 
+// Forward declarations
+void resetCamera();
+void zoomCameraToFit();
+
 // Emscripten export to load scene from JavaScript code string
 EMSCRIPTEN_KEEPALIVE
 void loadSceneFromCode(const char* code) {
@@ -1349,6 +1353,14 @@ void loadSceneFromCode(const char* code) {
     EM_ASM({
       console.log('✅ Scene loaded and model replaced successfully');
     });
+    
+    // Auto-reset camera to fit the loaded scene
+    if (!(*g_state.scene)->IsEmpty()) {
+      resetCamera();
+      EM_ASM({
+        console.log('📷 Camera auto-reset to fit loaded scene');
+      });
+    }
   } else {
     // Ensure we always have a meaningful error message
     std::string errorMsg = load.message.empty() 
@@ -1426,8 +1438,8 @@ void setCameraTarget(float x, float y, float z) {
 // Forward declaration
 void updateCameraPosition();
 
-EMSCRIPTEN_KEEPALIVE
-void resetCamera() {
+// Helper function to zoom camera to fit the loaded scene
+void zoomCameraToFit() {
   if (!g_state.orbitYaw || !g_state.orbitPitch || !g_state.orbitDistance ||
       !g_state.camera) {
     return;
@@ -1472,16 +1484,34 @@ void resetCamera() {
     if (maxSize > 0.001f) {
       // Calculate distance needed to fit the object in view
       // Using camera FOV, we need to fit the object in the view frustum
-      // Add padding factor (1.5x) to ensure object isn't at the edge
+      // Add padding factor (3.0x) to ensure object is zoomed out with safe margins
       const float fovyRad = DEG2RAD * g_state.camera->fovy;
-      const float padding = 1.5f;
-      float distance = (maxSize * 0.5f * padding) / tanf(fovyRad * 0.5f);
+      const float padding = 3.0f;
+      
+      // Get viewport dimensions to calculate aspect ratio
+      int screenWidth = GetScreenWidth();
+      int screenHeight = GetScreenHeight();
+      float aspectRatio = (screenHeight > 0) ? (float)screenWidth / (float)screenHeight : 1.0f;
+      
+      // Calculate distance needed for vertical fit (using height)
+      float verticalDistance = (size.y * 0.5f * padding) / tanf(fovyRad * 0.5f);
+      
+      // Calculate distance needed for horizontal fit (using width and aspect ratio)
+      // Horizontal FOV is calculated from vertical FOV and aspect ratio
+      float horizontalFovRad = 2.0f * atanf(tanf(fovyRad * 0.5f) * aspectRatio);
+      float horizontalDistance = (std::max(size.x, size.z) * 0.5f * padding) / tanf(horizontalFovRad * 0.5f);
+      
+      // Use the larger distance to ensure object fits in both dimensions
+      float distance = std::max(verticalDistance, horizontalDistance);
       
       // Clamp distance to reasonable bounds
       distance = std::max(1.0f, std::min(distance, 50.0f));
       
-      // Set camera target to center of bounding box
-      g_state.camera->target = center;
+      // Set camera target to center of bounding box with vertical offset for top margin
+      // Moving target up (increasing Y) makes object appear lower on screen (more top margin)
+      Vector3 targetCenter = center;
+      targetCenter.y += size.y * 0.2f;  // Add 20% of height as offset to create top margin
+      g_state.camera->target = targetCenter;
       
       // Set distance
       *g_state.orbitDistance = distance;
@@ -1507,6 +1537,11 @@ void resetCamera() {
     *g_state.orbitPitch = *g_state.initialPitch;
     updateCameraPosition();
   }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void resetCamera() {
+  zoomCameraToFit();
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -1603,6 +1638,7 @@ int main() {
     }
     watchedFiles = std::move(updated);
   };
+  bool isFirstLoad = true;
   if (defaultScript) {
     scriptPath = std::filesystem::absolute(*defaultScript);
     auto load = LoadSceneFromFile(runtime, scriptPath);
@@ -1621,6 +1657,7 @@ int main() {
     // This ensures the model can be created without crashing
     manifold::Manifold emptyScene = manifold::Manifold::Cube({0.001, 0.001, 0.001}, true);
     scene = std::make_shared<manifold::Manifold>(emptyScene);
+    isFirstLoad = false;  // Don't auto-zoom for empty scene
     if (statusMessage.empty()) {
       reportStatus("Ready - no scene loaded.");
     }
@@ -1640,6 +1677,11 @@ int main() {
   g_state.initialDistance = &initialDistance;
   g_state.initialYaw = &initialYaw;
   g_state.initialPitch = &initialPitch;
+  
+  // Auto-zoom to fit on first load if scene is not empty
+  if (isFirstLoad && scene && !scene->IsEmpty()) {
+    zoomCameraToFit();
+  }
 #endif
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);

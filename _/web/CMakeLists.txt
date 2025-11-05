@@ -18,17 +18,8 @@ else()
     message(FATAL_ERROR "Emscripten not found. Set EMSCRIPTEN environment variable or install Emscripten SDK.")
 endif()
 
-# Set emscripten flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s USE_GLFW=3 -s FULL_ES3=1 -s USE_WEBGL2=1")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=2GB")
-# Increase stack size to 2MB (default is 16KB in Emscripten 3.x, which is too small for QuickJS)
-# QuickJS itself uses 2MB stack size to prevent stack overflow during parsing
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s STACK_SIZE=2097152")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','MEMFS','addRunDependency','removeRunDependency','stackAlloc','getValue']")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s EXPORTED_FUNCTIONS=['_loadSceneFromCode','_getStatusMessage','_logBuildVersion','_main']")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s INVOKE_RUN=1")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s MODULARIZE=1 -s EXPORT_NAME='createDingCADModule' -s EXPORT_ES6=1")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s FORCE_FILESYSTEM=1 -s ASSERTIONS=1")
+# Emscripten linker flags (only applied during linking, not compilation)
+# These will be set via target_link_options() for the dingcad_viewer_web target
 
 # Disable TBB for web build (not needed for single-threaded web)
 # Disable mesh export (requires assimp, not needed for web build)
@@ -179,6 +170,28 @@ else()
     # Try to link via Emscripten port or library name
     target_link_libraries(dingcad_viewer_web PRIVATE raylib)
 endif()
+
+# Set emscripten linker options (only applied during linking, not compilation)
+# This prevents warnings about linker settings being ignored during compilation
+# Increase stack size to 2MB (default is 16KB in Emscripten 3.x, which is too small for QuickJS)
+# QuickJS itself uses 2MB stack size to prevent stack overflow during parsing
+# Note: Emscripten flags must be in format -sFLAG=value (no space after -s)
+target_link_options(dingcad_viewer_web PRIVATE
+  -sUSE_GLFW=3
+  -sFULL_ES3=1
+  -sUSE_WEBGL2=1
+  -sALLOW_MEMORY_GROWTH=1
+  -sMAXIMUM_MEMORY=2GB
+  -sSTACK_SIZE=2097152
+  -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','MEMFS','addRunDependency','removeRunDependency','stackAlloc','getValue']
+  -sEXPORTED_FUNCTIONS=['_loadSceneFromCode','_getStatusMessage','_logBuildVersion','_main']
+  -sINVOKE_RUN=1
+  -sMODULARIZE=1
+  -sEXPORT_NAME='createDingCADModule'
+  -sEXPORT_ES6=1
+  -sFORCE_FILESYSTEM=1
+  -sASSERTIONS=1
+)
 
 # Set output name
 set_target_properties(dingcad_viewer_web PROPERTIES
