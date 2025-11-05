@@ -102,7 +102,7 @@ bool ReadBoundingBox(JSContext *ctx, JSValue value, BoundingBox &out, std::strin
     return false;
   }
   auto parseVec = [&](JSValue vecVal, std::array<double, 3> &target) -> bool {
-    if (!JS_IsArray(ctx, vecVal)) {
+    if (!JS_IsArray(vecVal)) {
       err = "Bounding box component is not array";
       return false;
     }

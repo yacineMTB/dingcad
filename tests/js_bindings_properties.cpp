@@ -124,7 +124,7 @@ bool ReadString(JSContext *ctx, JSValue value, std::string &out, std::string &er
 bool ExtractPolygons(JSContext *ctx, JSValue value,
                      std::vector<std::vector<std::array<double, 2>>> &out,
                      std::string &error) {
-  if (!JS_IsArray(ctx, value)) {
+  if (!JS_IsArray(value)) {
     error = "Result is not an array";
     return false;
   }
@@ -144,7 +144,7 @@ bool ExtractPolygons(JSContext *ctx, JSValue value,
       error = "Failed to fetch polygon loop";
       return false;
     }
-    if (!JS_IsArray(ctx, loopVal)) {
+    if (!JS_IsArray(loopVal)) {
       error = "Loop is not an array";
       JS_FreeValue(ctx, loopVal);
       return false;
@@ -167,7 +167,7 @@ bool ExtractPolygons(JSContext *ctx, JSValue value,
         JS_FreeValue(ctx, loopVal);
         return false;
       }
-      if (!JS_IsArray(ctx, pointVal)) {
+      if (!JS_IsArray(pointVal)) {
         error = "Point is not an array";
         JS_FreeValue(ctx, pointVal);
         JS_FreeValue(ctx, loopVal);
