@@ -9,6 +9,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 #include <vector>
 
 extern "C" {
@@ -254,17 +255,26 @@ int main() {
         if (!ReadBoundingBox(ctx, result, box, error)) return false;
         if (!AlmostEqual(box.min[0], 3.0, 1e-3, 1e-1) ||
             !AlmostEqual(box.max[0], 4.0, 1e-3, 1e-1)) {
-          error = "Transform X bounds incorrect";
+          std::ostringstream oss;
+          oss << "Transform X bounds incorrect: min=" << box.min[0]
+              << " max=" << box.max[0];
+          error = oss.str();
           return false;
         }
         if (!AlmostEqual(box.min[1], -2.0, 1e-3, 1e-1) ||
             !AlmostEqual(box.max[1], -1.0, 1e-3, 1e-1)) {
-          error = "Transform Y bounds incorrect";
+          std::ostringstream oss;
+          oss << "Transform Y bounds incorrect: min=" << box.min[1]
+              << " max=" << box.max[1];
+          error = oss.str();
           return false;
         }
         if (!AlmostEqual(box.min[2], 5.0, 1e-3, 1e-1) ||
             !AlmostEqual(box.max[2], 6.0, 1e-3, 1e-1)) {
-          error = "Transform Z bounds incorrect";
+          std::ostringstream oss;
+          oss << "Transform Z bounds incorrect: min=" << box.min[2]
+              << " max=" << box.max[2];
+          error = oss.str();
           return false;
         }
         return true;
@@ -427,11 +437,15 @@ int main() {
           return false;
         }
         if (!AlmostEqual(vol, 500.0, 1e-2, 2.0)) {
-          error = "Trimmed volume mismatch";
+          std::ostringstream oss;
+          oss << "Trimmed volume mismatch: actual=" << vol;
+          error = oss.str();
           return false;
         }
         if (maxX > 1.5) {
-          error = "Trimmed maxX should be near zero";
+          std::ostringstream oss;
+          oss << "Trimmed maxX should be near zero: maxX=" << maxX;
+          error = oss.str();
           return false;
         }
         return true;
@@ -455,7 +469,10 @@ int main() {
         if (!ReadDouble(ctx, result, volume, error)) return false;
         const double expected = kPi * 5.0 * 5.0 * 10.0;
         if (!AlmostEqual(volume, expected, 3e-1, 7.5)) {
-          error = "Revolve cylinder volume mismatch";
+          std::ostringstream oss;
+          oss << "Revolve cylinder volume mismatch: actual=" << volume
+              << " expected=" << expected;
+          error = oss.str();
           return false;
         }
         return true;
