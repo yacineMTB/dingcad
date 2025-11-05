@@ -9,6 +9,7 @@ add_library(dingcad_quickjs STATIC
   ${PROJECT_SOURCE_DIR}/vendor/quickjs/dtoa.c
 )
 target_include_directories(dingcad_quickjs PUBLIC ${PROJECT_SOURCE_DIR}/vendor/quickjs)
+target_compile_definitions(dingcad_quickjs PRIVATE _GNU_SOURCE)
 set_target_properties(dingcad_quickjs PROPERTIES LINKER_LANGUAGE C)
 
 add_executable(dingcad_viewer
