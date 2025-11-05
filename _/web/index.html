@@ -1156,6 +1156,93 @@
                         if (statusMsg && statusMsg.includes('successfully')) {
                             console.log('✅ Scene loaded successfully:', statusMsg);
                             updateStatus(statusMsg, 'success');
+                            
+                            // Restore camera state from URL if it was set (scene loading auto-resets camera)
+                            // Camera tracking should already be disabled from parseURLAndRestoreState
+                            // Note: Code may execute multiple times, so we restore on every scene load
+                            if (pendingCameraStateFromURL) {
+                                console.log('📷 Restoring camera state from URL after scene load:', pendingCameraStateFromURL);
+                                
+                                // Clear any existing timeout and interval - we'll set new ones
+                                if (cameraRestoreTimeout) {
+                                    clearTimeout(cameraRestoreTimeout);
+                                    cameraRestoreTimeout = null;
+                                }
+                                if (cameraRestoreInterval) {
+                                    clearInterval(cameraRestoreInterval);
+                                    cameraRestoreInterval = null;
+                                }
+                                
+                                // Restore IMMEDIATELY to minimize visible flash of default camera
+                                setCameraState(pendingCameraStateFromURL);
+                                
+                                // Also set up a continuous restoration loop to keep it in place
+                                // This handles cases where C++ resets the camera multiple times
+                                let restoreAttempts = 0;
+                                const maxRestoreAttempts = 10; // Restore up to 10 times over 2 seconds
+                                cameraRestoreInterval = setInterval(() => {
+                                    restoreAttempts++;
+                                    if (pendingCameraStateFromURL) {
+                                        setCameraState(pendingCameraStateFromURL);
+                                    } else {
+                                        clearInterval(cameraRestoreInterval);
+                                        cameraRestoreInterval = null;
+                                    }
+                                    
+                                    if (restoreAttempts >= maxRestoreAttempts) {
+                                        clearInterval(cameraRestoreInterval);
+                                        cameraRestoreInterval = null;
+                                        
+                                        // Set lastCameraState to the desired state to prevent tracking updates
+                                        if (pendingCameraStateFromURL) {
+                                            lastCameraState = {
+                                                yaw: pendingCameraStateFromURL.yaw,
+                                                pitch: pendingCameraStateFromURL.pitch,
+                                                distance: pendingCameraStateFromURL.distance,
+                                                target: {
+                                                    x: pendingCameraStateFromURL.target.x,
+                                                    y: pendingCameraStateFromURL.target.y,
+                                                    z: pendingCameraStateFromURL.target.z
+                                                }
+                                            };
+                                        }
+                                        
+                                        // Schedule re-enabling tracking and clearing pending state
+                                        // Use a longer delay to handle multiple scene loads
+                                        // Only clear after we're sure no more scene loads will happen
+                                        cameraRestoreTimeout = setTimeout(() => {
+                                            cameraTrackingDisabled = false;
+                                            console.log('📷 Re-enabled camera tracking after URL restoration (all scene loads complete)');
+                                            // Clear the pending state after all executions are done
+                                            pendingCameraStateFromURL = null;
+                                            cameraRestoreTimeout = null;
+                                        }, 1500); // 1.5 seconds after last restore attempt
+                                    }
+                                }, 200); // Restore every 200ms
+                            }
+                            
+                            // Try to extract model stats if available from status message
+                            // Status messages often contain model info like "X triangles, Y vertices"
+                            const statsMatch = statusMsg.match(/(\d+)\s*(?:triangles?|tris?)/i);
+                            if (statsMatch) {
+                                // Cache model info for currently selected files
+                                const selectedFiles = Array.from(selectedLibraryItems)
+                                    .map(fileKey => libraryFiles.find(file => getFileKey(file) === fileKey))
+                                    .filter(file => file !== undefined);
+                                
+                                selectedFiles.forEach(file => {
+                                    const fileKey = getFileKey(file);
+                                    if (!modelInfoCache.has(fileKey)) {
+                                        modelInfoCache.set(fileKey, {
+                                            status: statusMsg,
+                                            hasStats: true
+                                        });
+                                    }
+                                });
+                                
+                                // Update library list to show new info
+                                populateLibraryList();
+                            }
                             return;
                         }
                         
@@ -1221,6 +1308,11 @@
         let libraryFiles = [];
         let libraryPanelVisible = false;
         let selectedLibraryItems = new Set(); // Track selected library items by fileKey
+        let modelInfoCache = new Map(); // Cache model info (vertices, triangles) per file
+        let pendingCameraStateFromURL = null; // Store camera state from URL to restore after scene loads
+        let cameraTrackingDisabled = false; // Flag to disable camera tracking during URL restoration
+        let cameraRestoreTimeout = null; // Timeout to delay clearing pendingCameraStateFromURL
+        let cameraRestoreInterval = null; // Interval for continuous camera restoration
         
         // Load library manifest dynamically
         async function loadLibraryManifest() {
@@ -1267,25 +1359,32 @@
                 url.searchParams.delete('tz');
             }
             
-            // Handle library items - use 'items' parameter for multiple, 'item' for single (backward compat)
-            url.searchParams.delete('item');
-            url.searchParams.delete('items');
-            
-            if (libraryItems !== null && libraryItems.length > 0) {
-                if (libraryItems.length === 1) {
-                    // Single item - use 'item' for backward compatibility
-                    const fileKey = libraryItems[0].path || `${libraryItems[0].folder || 'root'}/${libraryItems[0].name}`;
-                url.searchParams.set('item', fileKey);
-                } else {
-                    // Multiple items - use 'items' parameter (comma-separated)
-                    const fileKeys = libraryItems.map(item => 
+            // Handle library items - always use 'items' parameter (array, can be single or multiple)
+            // Only delete/update library items if explicitly provided (libraryItems !== null)
+            // When libraryItems is null, preserve existing items from URL
+            if (libraryItems !== null) {
+                url.searchParams.delete('item'); // Remove old 'item' param for backward compat
+                url.searchParams.delete('items');
+                
+                if (libraryItems.length > 0) {
+                    // Sort items alphabetically by fileKey to maintain consistent order
+                    const sortedItems = [...libraryItems].sort((a, b) => {
+                        const keyA = a.path || `${a.folder || 'root'}/${a.name}`;
+                        const keyB = b.path || `${b.folder || 'root'}/${b.name}`;
+                        return keyA.localeCompare(keyB);
+                    });
+                    
+                    // Always use 'items' parameter (comma-separated, sorted a-z)
+                    const fileKeys = sortedItems.map(item => 
                         item.path || `${item.folder || 'root'}/${item.name}`
                     );
                     url.searchParams.set('items', fileKeys.join(','));
                 }
             }
+            // If libraryItems is null, existing library items in URL are preserved automatically
             
-            if (cameraState !== null) {
+            // Don't update camera params if tracking is disabled (during URL restoration)
+            if (cameraState !== null && !cameraTrackingDisabled) {
                 if (cameraState.yaw !== undefined) url.searchParams.set('yaw', cameraState.yaw.toFixed(4));
                 if (cameraState.pitch !== undefined) url.searchParams.set('pitch', cameraState.pitch.toFixed(4));
                 if (cameraState.distance !== undefined) url.searchParams.set('distance', cameraState.distance.toFixed(4));
@@ -1295,6 +1394,7 @@
                     url.searchParams.set('tz', cameraState.target.z.toFixed(4));
                 }
             }
+            // If cameraState is null or tracking is disabled, camera params are preserved automatically
             
             // Update URL without page reload
             window.history.replaceState({}, '', url);
@@ -1418,6 +1518,11 @@
         // Debounced camera update function
         let cameraUpdateTimeout = null;
         function updateCameraInURL() {
+            // Don't update URL if camera tracking is disabled (during URL restoration)
+            if (cameraTrackingDisabled) {
+                return;
+            }
+            
             if (cameraUpdateTimeout) clearTimeout(cameraUpdateTimeout);
             cameraUpdateTimeout = setTimeout(() => {
                 const cameraState = getCameraState();
@@ -1461,16 +1566,31 @@
                 .map(fileKey => libraryFiles.find(file => getFileKey(file) === fileKey))
                 .filter(file => file !== undefined);
             
+            // Update URL with selected items (preserve existing camera params) - do this immediately
+            // so the URL reflects the current selection even if loading fails
+            // BUT: If we have pending camera state from URL, don't update camera params - preserve them
+            if (pendingCameraStateFromURL) {
+                // Preserve original camera params from URL, don't get current state
+                updateURL(selectedFiles.length > 0 ? selectedFiles : [], null, true);
+            } else {
+                const currentCameraState = getCameraState();
+                updateURL(selectedFiles.length > 0 ? selectedFiles : [], currentCameraState, true);
+            }
+            
             if (selectedFiles.length === 0) {
                 console.warn('⚠️ No valid files found for selected items');
+                // Clear the canvas if no items are selected
+                if (editor) {
+                    editor.setValue('// No library items selected\n// Select items from the library to load them');
+                    updateEditorTitle(null);
+                    if (Module && isInitialized) {
+                        executeCode();
+                    }
+                }
                 return;
             }
             
             console.log(`📚 Loading ${selectedFiles.length} library file(s): ${selectedFiles.map(f => f.name).join(', ')}`);
-            
-            // Update URL with selected items (preserve existing camera params)
-            const currentCameraState = getCameraState();
-            updateURL(selectedFiles, currentCameraState, true);
             
             // Store selected items in localStorage
             try {
@@ -1660,6 +1780,13 @@
                 
                 // Execute code
                     setTimeout(() => {
+                        // If we have pending camera state, set it immediately before executing
+                        // This prevents the default camera from being visible
+                        if (pendingCameraStateFromURL) {
+                            setCameraState(pendingCameraStateFromURL);
+                            console.log('📷 Pre-restored camera before code execution');
+                        }
+                        
                         if (!Module || !isInitialized) {
                             console.warn('⚠️ Module not ready yet, waiting...');
                             let attempts = 0;
@@ -1667,6 +1794,10 @@
                                 attempts++;
                                 if (Module && isInitialized) {
                                     clearInterval(checkReady);
+                                    // Restore camera again right before executing
+                                    if (pendingCameraStateFromURL) {
+                                        setCameraState(pendingCameraStateFromURL);
+                                    }
                                     executeCode();
                             } else if (attempts > 20) {
                                     clearInterval(checkReady);
@@ -1771,10 +1902,50 @@
                     
                     const isSelected = selectedLibraryItems.has(fileKey);
                     
+                    // Get model info for subtitle - prefer cached info, then folder, then fallback
+                    let subtitleText = '';
+                    const cachedInfo = modelInfoCache.get(fileKey);
+                    
+                    if (cachedInfo && cachedInfo.status) {
+                        // Extract useful info from status message
+                        const status = cachedInfo.status;
+                        // Try to extract triangle/vertex counts
+                        const triMatch = status.match(/(\d+)\s*(?:triangles?|tris?)/i);
+                        const vertMatch = status.match(/(\d+)\s*vertices?/i);
+                        
+                        if (triMatch && vertMatch) {
+                            subtitleText = `${triMatch[1]} triangles, ${vertMatch[1]} vertices`;
+                        } else if (triMatch) {
+                            subtitleText = `${triMatch[1]} triangles`;
+                        } else if (vertMatch) {
+                            subtitleText = `${vertMatch[1]} vertices`;
+                        } else {
+                            // Use folder name or other helpful info
+                            subtitleText = file.folder ? `${file.folder} library` : 'Model';
+                        }
+                    } else {
+                        // No cached info - show folder name or function category
+                        if (file.folder && file.folder !== 'root') {
+                            subtitleText = `${file.folder} library`;
+                        } else {
+                            // Try to infer from filename what type of model it is
+                            const name = file.name.toLowerCase();
+                            if (name.includes('pcb') || name.includes('board')) {
+                                subtitleText = 'PCB model';
+                            } else if (name.includes('enclosure') || name.includes('case')) {
+                                subtitleText = 'Enclosure';
+                            } else if (name.includes('xiao') || name.includes('esp32')) {
+                                subtitleText = 'ESP32 module';
+                            } else {
+                                subtitleText = '3D model';
+                            }
+                        }
+                    }
+                    
                     item.innerHTML = `
                         <div style="flex: 1;">
                         <div class="library-item-name">${file.name}</div>
-                        <div class="library-item-desc">${file.desc || 'No description'}</div>
+                        <div class="library-item-desc">${subtitleText || 'No description'}</div>
                         </div>
                     `;
                     
@@ -1828,17 +1999,27 @@
                     };
                 }
                 
-                // Restore camera state after module is ready
+                // Store camera state to restore after scene loads (scene loading auto-resets camera)
+                pendingCameraStateFromURL = cameraState;
+                console.log('📷 Stored camera state from URL (will restore after scene loads):', cameraState);
+                
+                // Disable camera tracking immediately to prevent URL from being overwritten
+                // We'll re-enable it after the camera is restored
+                cameraTrackingDisabled = true;
+                console.log('📷 Disabled camera tracking to preserve URL camera parameters');
+                
+                // Try to restore immediately if module is ready and no items are loading
+                // But we'll restore it again after scene loads to override the auto-reset
                 if (Module && isInitialized) {
                     setCameraState(cameraState);
-                    console.log('✅ Restored camera state from URL:', cameraState);
+                    console.log('✅ Restored camera state from URL (initial):', cameraState);
                 } else {
                     // Wait for module to be ready
                     const checkReady = setInterval(() => {
                         if (Module && isInitialized) {
                             clearInterval(checkReady);
                             setCameraState(cameraState);
-                            console.log('✅ Restored camera state from URL:', cameraState);
+                            console.log('✅ Restored camera state from URL (initial):', cameraState);
                         }
                     }, 100);
                     // Timeout after 5 seconds
@@ -1846,30 +2027,93 @@
                 }
             }
             
-            // Parse library items from URL (support both 'item' and 'items' parameters)
-            const itemKey = urlParams.get('item');
+            // Parse library items from URL - always use 'items' parameter (migrates old 'item' to 'items')
             const itemsKey = urlParams.get('items');
+            const itemKey = urlParams.get('item'); // Backward compatibility: migrate old 'item' to 'items'
             
             let itemsToLoad = [];
             
-            if (itemsKey && libraryFiles && libraryFiles.length > 0) {
-                // Multiple items - comma-separated
-                const itemKeys = itemsKey.split(',').map(k => k.trim()).filter(k => k);
-                itemsToLoad = itemKeys
-                    .map(key => findMatchingLibraryFile(key, libraryFiles))
-                    .filter(file => file !== null && file !== undefined);
-            } else if (itemKey && libraryFiles && libraryFiles.length > 0) {
-                // Single item (backward compatibility)
-                const matchingFile = findMatchingLibraryFile(itemKey, libraryFiles);
-                if (matchingFile) {
-                    itemsToLoad = [matchingFile];
+            // Check if we have items in URL
+            if (itemsKey || itemKey) {
+                if (!libraryFiles || libraryFiles.length === 0) {
+                    console.warn('⚠️ URL has items parameter but libraryFiles not loaded yet, will retry...');
+                    // Retry after a short delay if libraryFiles aren't ready
+                    // Use a flag to track if we're already retrying to avoid duplicate calls
+                    if (!window._retryingURLParse) {
+                        window._retryingURLParse = true;
+                        setTimeout(() => {
+                            window._retryingURLParse = false;
+                            if (libraryFiles && libraryFiles.length > 0) {
+                                console.log('🔄 Retrying URL parse now that libraryFiles are loaded');
+                                parseURLAndRestoreState();
+                            } else {
+                                console.warn('⚠️ LibraryFiles still not loaded after retry');
+                            }
+                        }, 300);
+                    }
+                    return false; // Not ready yet, will retry
+                }
+                
+                if (itemsKey) {
+                    // Parse items array (comma-separated)
+                    // URLSearchParams.get() should decode automatically, but handle edge cases
+                    // where the value might be double-encoded or encoded differently
+                    let decodedItemsKey = itemsKey;
+                    // If the comma is still encoded as %2C, decode it
+                    if (decodedItemsKey.includes('%2C')) {
+                        decodedItemsKey = decodeURIComponent(decodedItemsKey);
+                    }
+                    // Also handle if the entire string is encoded
+                    try {
+                        if (decodedItemsKey.includes('%')) {
+                            const testDecode = decodeURIComponent(decodedItemsKey);
+                            // Only use if it actually decoded something (not just the same)
+                            if (testDecode !== decodedItemsKey) {
+                                decodedItemsKey = testDecode;
+                            }
+                        }
+                    } catch (e) {
+                        // If decode fails, use original
+                        console.warn('⚠️ Failed to decode items parameter:', e);
+                    }
+                    
+                    const itemKeys = decodedItemsKey.split(',').map(k => k.trim()).filter(k => k);
+                    console.log(`🔍 Looking for ${itemKeys.length} item(s) in URL:`, itemKeys);
+                    console.log(`🔍 Raw itemsKey: "${itemsKey}", Decoded: "${decodedItemsKey}"`);
+                    itemsToLoad = itemKeys
+                        .map(key => {
+                            const file = findMatchingLibraryFile(key, libraryFiles);
+                            if (!file) {
+                                console.warn(`⚠️ Could not find library file matching: ${key}`);
+                            }
+                            return file;
+                        })
+                        .filter(file => file !== null && file !== undefined);
+                    
+                    if (itemsToLoad.length < itemKeys.length) {
+                        console.warn(`⚠️ Only found ${itemsToLoad.length} of ${itemKeys.length} item(s) from URL`);
+                    }
+                } else if (itemKey) {
+                    // Backward compatibility: migrate old 'item' (singular) to 'items' (plural)
+                    console.log(`🔍 Looking for item in URL (backward compat):`, itemKey);
+                    const matchingFile = findMatchingLibraryFile(itemKey, libraryFiles);
+                    if (matchingFile) {
+                        itemsToLoad = [matchingFile];
+                        // Update URL to use 'items' instead of 'item'
+                        const url = new URL(window.location);
+                        url.searchParams.delete('item');
+                        url.searchParams.set('items', itemKey);
+                        window.history.replaceState({}, '', url);
+                    } else {
+                        console.warn(`⚠️ Could not find library file matching: ${itemKey}`);
+                    }
                 }
             }
             
             if (itemsToLoad.length > 0) {
                 console.log(`✅ Found ${itemsToLoad.length} library item(s) in URL: ${itemsToLoad.map(f => f.name).join(', ')}, loading...`);
                 
-                // Set selected items
+                // Set selected items immediately
                 selectedLibraryItems.clear();
                 itemsToLoad.forEach(file => {
                     selectedLibraryItems.add(getFileKey(file));
@@ -1878,21 +2122,64 @@
                 
                 // Load them after module is ready (don't open library panel when loading from URL)
                 const loadItems = () => {
-                    loadSelectedLibraryItems(false);
+                    if (Module && isInitialized && editor) {
+                        console.log('📚 Loading selected library items from URL...');
+                        loadSelectedLibraryItems(false);
+                        return true; // Loaded successfully
+                    } else {
+                        const missing = [];
+                        if (!Module) missing.push('Module');
+                        if (!isInitialized) missing.push('isInitialized');
+                        if (!editor) missing.push('editor');
+                        console.log(`⏳ Waiting for module to be ready before loading items... (missing: ${missing.join(', ')})`);
+                        return false; // Not ready yet
+                    }
                 };
                 
-                    if (Module && isInitialized) {
-                    setTimeout(loadItems, 500);
-                    } else {
-                        const checkReady = setInterval(() => {
-                            if (Module && isInitialized) {
-                                clearInterval(checkReady);
-                            setTimeout(loadItems, 500);
-                            }
-                        }, 100);
-                        setTimeout(() => clearInterval(checkReady), 5000);
-                    }
+                // Try to load immediately if ready, otherwise wait and retry
+                if (Module && isInitialized && editor) {
+                    // Module is ready, load after a short delay to ensure everything is initialized
+                    setTimeout(() => {
+                        if (!loadItems()) {
+                            // If it still failed, retry with polling
+                            const checkReady = setInterval(() => {
+                                if (loadItems()) {
+                                    clearInterval(checkReady);
+                                }
+                            }, 200);
+                            setTimeout(() => clearInterval(checkReady), 10000); // 10 second timeout
+                        }
+                    }, 300);
+                } else {
+                    // Module not ready yet, poll until it's ready
+                    const missing = [];
+                    if (!Module) missing.push('Module');
+                    if (!isInitialized) missing.push('isInitialized');
+                    if (!editor) missing.push('editor');
+                    console.log(`⏳ Module not ready yet, waiting... (missing: ${missing.join(', ')})`);
+                    let retryCount = 0;
+                    const maxRetries = 50; // 50 * 200ms = 10 seconds
+                    const checkReady = setInterval(() => {
+                        retryCount++;
+                        if (Module && isInitialized && editor) {
+                            clearInterval(checkReady);
+                            console.log(`✅ Module ready after ${retryCount} checks, loading items...`);
+                            setTimeout(() => {
+                                loadItems();
+                            }, 300);
+                        } else if (retryCount >= maxRetries) {
+                            clearInterval(checkReady);
+                            console.error('❌ Module not ready after 10 seconds, giving up');
+                        }
+                    }, 200);
+                }
                 return true; // URL items take precedence
+            }
+            
+            // If items were in URL but none matched, return true to prevent falling back to localStorage
+            if (itemsKey || itemKey) {
+                console.warn('⚠️ Items found in URL but none could be matched');
+                return true; // URL had items, don't fall back to localStorage
             }
             
             return false; // No URL items, fall back to localStorage
@@ -1906,12 +2193,12 @@
             const decodedKey = decodeURIComponent(searchKey);
             const normalizedKey = decodedKey.replace(/^\.\//, '').replace(/^\/+/, '');
             
-            return libraryFiles.find(file => {
+            const matchedFile = libraryFiles.find(file => {
                 const fileKey = file.path || `${file.folder || 'root'}/${file.name}`;
                 const normalizedFileKey = fileKey.replace(/^\.\//, '').replace(/^\/+/, '');
                 
                 // Try multiple matching strategies
-                return normalizedFileKey === normalizedKey ||
+                const matches = normalizedFileKey === normalizedKey ||
                        fileKey === decodedKey ||
                        file.path === decodedKey ||
                        file.path === normalizedKey ||
@@ -1919,15 +2206,37 @@
                        file.name === normalizedKey.split('/').pop() ||
                        `${file.folder || 'root'}/${file.name}` === normalizedKey ||
                        `${file.folder || 'root'}/${file.name}` === decodedKey;
+                
+                if (matches) {
+                    console.log(`✅ Matched "${searchKey}" -> "${fileKey}" (file: ${file.name})`);
+                }
+                
+                return matches;
             });
+            
+            if (!matchedFile) {
+                // Debug: log first few file keys for comparison
+                const sampleKeys = libraryFiles.slice(0, 5).map(f => 
+                    f.path || `${f.folder || 'root'}/${f.name}`
+                );
+                console.log(`🔍 No match for "${searchKey}" (decoded: "${decodedKey}", normalized: "${normalizedKey}")`);
+                console.log(`   Sample library file keys:`, sampleKeys);
+            }
+            
+            return matchedFile;
         }
         
         // Function to auto-load the last library item(s)
         function autoLoadLastLibraryItem() {
             // Check URL first, if it has items, use that instead
             const urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.get('item') || urlParams.get('items')) {
-                console.log('ℹ️ URL has item(s) parameter, skipping localStorage auto-load');
+            if (urlParams.get('items')) {
+                console.log('ℹ️ URL has items parameter, skipping localStorage auto-load');
+                return false;
+            }
+            // Also check for old 'item' parameter for backward compatibility
+            if (urlParams.get('item')) {
+                console.log('ℹ️ URL has old item parameter, skipping localStorage auto-load');
                 return false;
             }
             
@@ -2017,13 +2326,14 @@
         function checkAndAutoLoad() {
             if (moduleInitialized && manifestLoaded) {
                 // Both are ready, try to parse URL and restore state
+                // Use a shorter delay since the loading logic handles its own timing
                 setTimeout(() => {
                     const urlRestored = parseURLAndRestoreState();
                     // If URL didn't have an item, fall back to localStorage
                     if (!urlRestored) {
                         autoLoadLastLibraryItem();
                     }
-                }, 500);
+                }, 100);
             }
         }
         
@@ -2031,6 +2341,9 @@
         let lastCameraState = null;
         function trackCameraChanges() {
             if (!Module || !isInitialized) return;
+            
+            // Don't track camera changes if we're restoring camera from URL
+            if (cameraTrackingDisabled) return;
             
             const currentState = getCameraState();
             if (!currentState) return;

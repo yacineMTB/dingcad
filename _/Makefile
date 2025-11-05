@@ -37,14 +37,49 @@ configure: init ## Configure CMake build system
 	cmake -S "$(ROOT_DIR)" -B "$(BUILD_DIR)"
 	@echo "✓ CMake configuration complete"
 
-build: configure ## Build the project (configure if needed)
-	@echo "Building project..."
-	cmake --build "$(BUILD_DIR)" --target dingcad_viewer
+build: configure ## Build the project (configure if needed) - builds both OSX and web, then opens both
+	@echo "Building OSX version..."
+	@cmake --build "$(BUILD_DIR)" --target dingcad_viewer
 	@if [ ! -x "$(VIEWER_BIN)" ]; then \
 		echo "✗ Viewer executable not found at $(VIEWER_BIN)"; \
 		exit 1; \
 	fi
-	@echo "✓ Build complete: $(VIEWER_BIN)"
+	@echo "✓ OSX build complete: $(VIEWER_BIN)"
+	@echo ""
+	@echo "Building web version..."
+	@if ! command -v emcc &> /dev/null; then \
+		echo "⚠ Emscripten not found, skipping web build."; \
+		echo "   Install Emscripten to build web version: ./setup-dev.sh"; \
+	else \
+		$(MAKE) web >/dev/null 2>&1 && \
+		if [ -f "$(ROOT_DIR)/_/build-web/dingcad_viewer.js" ]; then \
+			echo "✓ Web build complete: $(ROOT_DIR)/_/build-web/dingcad_viewer.js"; \
+		else \
+			echo "⚠ Web build failed, but continuing..."; \
+		fi || echo "⚠ Web build failed, but continuing..."; \
+	fi
+	@echo ""
+	@echo "🚀 Opening builds..."
+	@if [ -x "$(VIEWER_BIN)" ]; then \
+		echo "  Opening OSX application..."; \
+		"$(VIEWER_BIN)" & \
+	fi
+	@if [ -f "$(ROOT_DIR)/_/build-web/dingcad_viewer.js" ]; then \
+		echo "  Starting web server and opening browser..."; \
+		PORT=8000; \
+		if lsof -ti:$$PORT >/dev/null 2>&1; then \
+			echo "    Port $$PORT already in use, using existing server..."; \
+		else \
+			echo "    Starting server on port $$PORT..."; \
+			cd "$(ROOT_DIR)/_/build-web" && \
+			python3 -m http.server $$PORT >/dev/null 2>&1 & \
+			sleep 2; \
+		fi; \
+		open http://localhost:$$PORT/index.html 2>/dev/null || \
+		xdg-open http://localhost:$$PORT/index.html 2>/dev/null || \
+		echo "    Please open http://localhost:$$PORT/index.html in your browser"; \
+	fi
+	@echo "✓ Build and launch complete!"
 
 run: build ## Build and run the viewer
 	@echo "Running viewer..."
