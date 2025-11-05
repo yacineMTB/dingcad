@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DingCAD Web Viewer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        #canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #888;
+        }
+        .spinner {
+            border: 3px solid #333;
+            border-top: 3px solid #0066cc;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div>Loading DingCAD...</div>
+        </div>
+        <canvas id="canvas"></canvas>
+        <div id="info">
+            DingCAD Web Viewer<br>
+            <span id="commit-info">Loading...</span>
+        </div>
+    </div>
+    
+    <script>
+        // Get commit info from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const commitSha = urlParams.get('commit') || 'master';
+        const commitShort = commitSha.substring(0, 7);
+        document.getElementById('commit-info').textContent = `Commit: ${commitShort}`;
+        
+        // Load the WebAssembly module
+        let Module = {};
+        
+        // Configure Emscripten module
+        Module = {
+            canvas: document.getElementById('canvas'),
+            onRuntimeInitialized: function() {
+                document.getElementById('loading').style.display = 'none';
+                console.log('DingCAD loaded successfully');
+            },
+            print: function(text) {
+                console.log(text);
+            },
+            printErr: function(text) {
+                console.error(text);
+            }
+        };
+        
+        // Load the main module
+        const script = document.createElement('script');
+        script.src = './dingcad_viewer.js';
+        script.onerror = function() {
+            document.getElementById('loading').innerHTML = 
+                '<div style="color: #ff6b6b;">Failed to load WebAssembly module.<br>Make sure the build completed successfully.</div>';
+        };
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>
+

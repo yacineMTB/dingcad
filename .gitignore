@@ -1,1 +1,7 @@
 build/
+build-web/
+.DS_Store
+
+# Test results - keep latest/ and README.md, ignore timestamped directories
+_/tests/results/[0-9]*/
+vendor/quickjs

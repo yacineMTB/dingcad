@@ -1,0 +1,9 @@
+{
+  "files": [
+    {"name": "ww.js", "desc": "Ww", "path": "./library/ww/ww.js", "folder": "ww"},
+    {"name": "DTSPCB.js", "desc": "DTSPCB", "path": "./library/yacine/DTSPCB.js", "folder": "yacine"},
+    {"name": "radio_enclosure.js", "desc": "Radio enclosure", "path": "./library/yacine/radio_enclosure.js", "folder": "yacine"},
+    {"name": "xiao_esp32c3.js", "desc": "Xiao esp32c3", "path": "./library/yacine/xiao_esp32c3.js", "folder": "yacine"}
+  ],
+  "excludeFolders": ["util"]
+}

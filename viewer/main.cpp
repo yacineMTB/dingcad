@@ -2,6 +2,12 @@
 #include "raymath.h"
 #include "rlgl.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#include <cstring>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -30,7 +36,32 @@ extern "C" {
 #include "manifold/polygon.h"
 #include "js_bindings.h"
 
+// Version header (generated at build time)
+#ifdef BUILD_VERSION
+#include "version.h"
+#else
+#define BUILD_VERSION "dev"
+#define BUILD_DATE "unknown"
+#define BUILD_COMMIT "unknown"
+#endif
+
 namespace {
+#ifdef __EMSCRIPTEN__
+// Log build version to console on initialization
+extern "C" {
+EMSCRIPTEN_KEEPALIVE
+void logBuildVersion() {
+  EM_ASM({
+    console.log('═══════════════════════════════════════');
+    console.log('🚀 DingCAD Web Viewer');
+    console.log('📦 Build Version: ' + UTF8ToString($0));
+    console.log('📅 Build Date: ' + UTF8ToString($1));
+    console.log('🔖 Commit: ' + UTF8ToString($2));
+    console.log('═══════════════════════════════════════');
+  }, BUILD_VERSION, BUILD_DATE, BUILD_COMMIT);
+}
+}
+#endif
 const Color kBaseColor = {210, 210, 220, 255};
 const char *kBrandText = "dingcad";
 constexpr float kBrandFontSize = 28.0f;
@@ -549,6 +580,18 @@ void DrawXZGrid(int halfLines, float spacing, Color color) {
 }
 
 std::optional<std::filesystem::path> FindDefaultScene() {
+#ifdef __EMSCRIPTEN__
+  // For web, look in virtual filesystem
+  const char* virtualPaths[] = {"/scene.js", "/home/scene.js"};
+  for (const char* vpath : virtualPaths) {
+    FILE* test = fopen(vpath, "r");
+    if (test) {
+      fclose(test);
+      return std::filesystem::path(vpath);
+    }
+  }
+  return std::nullopt;
+#else
   auto cwdCandidate = std::filesystem::current_path() / "scene.js";
   if (std::filesystem::exists(cwdCandidate)) return cwdCandidate;
   if (const char *home = std::getenv("HOME")) {
@@ -556,18 +599,90 @@ std::optional<std::filesystem::path> FindDefaultScene() {
     if (std::filesystem::exists(homeCandidate)) return homeCandidate;
   }
   return std::nullopt;
+#endif
 }
 
 std::optional<std::string> ReadTextFile(const std::filesystem::path &path) {
+#ifdef __EMSCRIPTEN__
+  // Use Emscripten's virtual filesystem for web
+  FILE* file = fopen(path.string().c_str(), "r");
+  if (!file) return std::nullopt;
+  std::string content;
+  char buffer[4096];
+  while (fgets(buffer, sizeof(buffer), file)) {
+    content += buffer;
+  }
+  fclose(file);
+  return content;
+#else
   std::ifstream file(path);
   if (!file) return std::nullopt;
   std::ostringstream ss;
   ss << file.rdbuf();
   return ss.str();
+#endif
+}
+
+// Track modules being loaded to prevent recursion
+static std::set<std::string> g_loading_modules;
+
+// Dummy module loader that returns an empty module during compilation
+// This prevents QuickJS from recursing when trying to resolve imports during compilation
+// The real resolution will happen later during JS_ResolveModule
+JSModuleDef *DummyModuleLoader(JSContext *ctx, const char *module_name, void *opaque) {
+  std::string modName(module_name);
+  
+  // Check if we're already loading this module to prevent recursion
+  if (g_loading_modules.find(modName) != g_loading_modules.end()) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ Recursion detected in DummyModuleLoader for:', UTF8ToString($0));
+    }, module_name);
+#endif
+    // Return nullptr to break recursion - QuickJS will handle the error
+    return nullptr;
+  }
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.warn('⚠️ DummyModuleLoader called during compilation for:', UTF8ToString($0));
+  }, module_name);
+#endif
+  
+  // Mark as loading
+  g_loading_modules.insert(modName);
+  
+  // Create a minimal empty module WITHOUT calling JS_Eval (which would trigger the loader again)
+  // Instead, we'll create a module using QuickJS's internal APIs
+  // But since we can't easily do that, let's just return nullptr and let QuickJS handle it
+  // The key is to prevent infinite recursion by not calling JS_Eval here
+  
+  // Remove from loading set before returning
+  g_loading_modules.erase(modName);
+  
+  // Return nullptr - this will cause QuickJS to throw an error, but that's better than recursion
+  // The error will be caught and handled properly during JS_ResolveModule
+  JS_ThrowReferenceError(ctx, "Module '%s' cannot be loaded during compilation (deferred to resolution phase)", module_name);
+  return nullptr;
 }
 
 JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, void *opaque) {
   auto *data = static_cast<ModuleLoaderData *>(opaque);
+  
+  // Ignore special inline module names that shouldn't go through the filesystem loader
+  // These are used for inline code evaluation and shouldn't trigger filesystem resolution
+  if (strncmp(module_name, "<", 1) == 0 || strncmp(module_name, "/dev/", 5) == 0) {
+    // This is an inline module (like <inline-scene>, <cmdline>, or /dev/stdin)
+    // QuickJS uses these for inline code and shouldn't try to load them via filesystem
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.warn('⚠️ ModuleLoader called for inline module:', UTF8ToString($0), '- this should not happen during compilation');
+    }, module_name);
+#endif
+    JS_ThrowReferenceError(ctx, "Module '%s' is an inline module and cannot be loaded via filesystem", module_name);
+    return nullptr;
+  }
+  
   std::filesystem::path resolved(module_name);
   if (resolved.is_relative()) {
     const std::filesystem::path base = data && !data->baseDir.empty()
@@ -577,6 +692,24 @@ JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, voi
   }
   resolved = std::filesystem::absolute(resolved).lexically_normal();
 
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('📦 ModuleLoader called for:', UTF8ToString($0));
+    console.log('📦 Current dependencies count:', $1);
+  }, resolved.string().c_str(), data ? data->dependencies.size() : 0);
+#endif
+
+  // Check for circular dependency to prevent stack overflow
+  if (data && data->dependencies.find(resolved) != data->dependencies.end()) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('⚠️ Circular dependency detected:', UTF8ToString($0));
+    }, resolved.string().c_str());
+#endif
+    JS_ThrowReferenceError(ctx, "Circular dependency detected: module '%s' is already being loaded", resolved.string().c_str());
+    return nullptr;
+  }
+
   if (data) {
     data->baseDir = resolved.parent_path();
     data->dependencies.insert(resolved);
@@ -585,18 +718,43 @@ JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, voi
   auto source = ReadTextFile(resolved);
   if (!source) {
     JS_ThrowReferenceError(ctx, "Unable to load module '%s'", resolved.string().c_str());
+    if (data) {
+      data->dependencies.erase(resolved);
+    }
     return nullptr;
   }
 
   const std::string moduleName = resolved.string();
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('🔨 Compiling module in loader:', UTF8ToString($0), 'size:', $1);
+  }, moduleName.c_str(), source->size());
+#endif
+  
   JSValue funcVal = JS_Eval(ctx, source->c_str(), source->size(), moduleName.c_str(),
                             JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
   if (JS_IsException(funcVal)) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ Module compilation failed in loader:', UTF8ToString($0));
+    }, moduleName.c_str());
+#endif
+    if (data) {
+      data->dependencies.erase(resolved);
+    }
     return nullptr;
   }
 
   auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(funcVal));
   JS_FreeValue(ctx, funcVal);
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Module loaded successfully:', UTF8ToString($0));
+  }, moduleName.c_str());
+#endif
+  
   return module;
 }
 
@@ -721,24 +879,719 @@ bool ReplaceScene(Model &model,
   return true;
 }
 
+// Global state for runtime scene loading (used by Emscripten exports)
+struct GlobalState {
+  JSRuntime *runtime = nullptr;
+  std::shared_ptr<manifold::Manifold> *scene = nullptr;
+  Model *model = nullptr;
+  std::string *statusMessage = nullptr;
+  // Camera state pointers
+  Camera3D *camera = nullptr;
+  float *orbitYaw = nullptr;
+  float *orbitPitch = nullptr;
+  float *orbitDistance = nullptr;
+  Vector3 *initialTarget = nullptr;
+  float *initialDistance = nullptr;
+  float *initialYaw = nullptr;
+  float *initialPitch = nullptr;
+};
+
+GlobalState g_state;
+
+LoadResult LoadSceneFromCode(JSRuntime *runtime, const std::string &code) {
+  LoadResult result;
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('📝 LoadSceneFromCode: Starting scene load, code size:', $0, 'bytes');
+    if ($0 > 0 && $1) {
+      const fullCode = UTF8ToString($1);
+      const preview = fullCode.substring(0, Math.min(200, fullCode.length));
+      const display = fullCode.length > 200 ? preview + '...' : preview;
+      console.log('📝 Code preview:', display);
+    }
+  }, code.size(), code.empty() ? nullptr : code.c_str());
+#endif
+  
+  if (code.empty()) {
+    result.message = "Error: No code provided. The scene code is empty.";
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode: Code is empty');
+    });
+#endif
+    return result;
+  }
+  
+#ifdef __EMSCRIPTEN__
+  // Write code to virtual filesystem
+  const char* virtualPath = "/tmp/scene.js";
+  EM_ASM({
+    console.log('💾 Writing code to virtual filesystem:', UTF8ToString($0));
+  }, virtualPath);
+  FILE* file = fopen(virtualPath, "w");
+  if (!file) {
+    result.message = "Error: Unable to write to virtual filesystem at " + std::string(virtualPath);
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode: Failed to open file for writing');
+    });
+#endif
+    return result;
+  }
+  size_t written = fwrite(code.c_str(), 1, code.size(), file);
+  fclose(file);
+  if (written != code.size()) {
+    result.message = "Error: Failed to write all code to virtual filesystem (wrote " + 
+                     std::to_string(written) + " of " + std::to_string(code.size()) + " bytes)";
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode: Incomplete write');
+    });
+#endif
+    return result;
+  }
+  EM_ASM({
+    console.log('✅ Code written to virtual filesystem');
+  });
+  
+  // Load from virtual file
+  std::filesystem::path scriptPath(virtualPath);
+#else
+  // For desktop, write to temp file
+  std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "dingcad_scene.js";
+  std::ofstream outFile(tempPath);
+  if (!outFile) {
+    result.message = "Error: Unable to write temporary file to " + tempPath.string();
+    return result;
+  }
+  outFile << code;
+  outFile.close();
+  std::filesystem::path scriptPath = tempPath;
+#endif
+
+  // Clear and initialize module loader data to prevent circular dependencies
+  g_module_loader_data.baseDir = scriptPath.parent_path();
+  g_module_loader_data.dependencies.clear();
+  // Don't insert scriptPath here - it will be added by the module loader if needed
+  // This prevents the module loader from thinking we're already loading this module
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('🔧 Creating JS context and registering bindings');
+  });
+#endif
+  JSContext *ctx = JS_NewContext(runtime);
+  if (!ctx) {
+    result.message = "Error: Failed to create JavaScript context";
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode: Failed to create JS context');
+    });
+#endif
+    return result;
+  }
+  RegisterBindings(ctx);
+
+  auto captureException = [&](const char* step) {
+    JSValue exc = JS_GetException(ctx);
+    std::string errorMsg;
+    
+    // Check what type of exception we have
+    int tag = JS_VALUE_GET_TAG(exc);
+    bool isError = JS_IsError(ctx, exc);
+    
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('🔍 Exception type tag:', $0, 'isError:', $1);
+    }, tag, isError ? 1 : 0);
+#endif
+    
+    // Try to get a simple error message first to avoid recursion
+    // If we get a stack overflow error, trying to extract details might cause more recursion
+    const char *excStr = nullptr;
+    try {
+      excStr = JS_ToCString(ctx, exc);
+      if (excStr && strlen(excStr) > 0) {
+        errorMsg = excStr;
+        // Check if this is a stack overflow error - if so, don't try to get more details
+        if (errorMsg.find("Maximum call stack size exceeded") != std::string::npos ||
+            errorMsg.find("stack size exceeded") != std::string::npos) {
+          JS_FreeCString(ctx, excStr);
+          result.message = std::string(step) + ": " + errorMsg + " (preventing further recursion)";
+#ifdef __EMSCRIPTEN__
+          EM_ASM({
+            console.error('❌ LoadSceneFromCode error at step:', UTF8ToString($0));
+            console.error('❌ Error details:', UTF8ToString($1));
+          }, step, errorMsg.c_str());
+#endif
+          JS_FreeValue(ctx, exc);
+          return; // Early return to avoid any property access that might cause recursion
+        }
+      }
+      if (excStr) JS_FreeCString(ctx, excStr);
+    } catch (...) {
+      // If even converting to string fails, use a fallback
+      if (excStr) JS_FreeCString(ctx, excStr);
+      errorMsg = "Error extracting exception details (exception access failed)";
+    }
+    
+    // Only try to get more details if we didn't get a stack overflow error
+    if (isError && errorMsg.find("Maximum call stack size exceeded") == std::string::npos) {
+      // Try to get name property first (error type)
+      JSValue name = JS_GetPropertyStr(ctx, exc, "name");
+      if (!JS_IsUndefined(name) && !JS_IsException(name)) {
+        const char *nameStr = JS_ToCString(ctx, name);
+        if (nameStr && strlen(nameStr) > 0) {
+          if (!errorMsg.empty()) {
+            errorMsg = std::string(nameStr) + ": " + errorMsg;
+          } else {
+            errorMsg = std::string(nameStr);
+          }
+        }
+        if (nameStr) JS_FreeCString(ctx, nameStr);
+      }
+      JS_FreeValue(ctx, name);
+      
+      // Try to get message property (but limit length to avoid huge messages)
+      JSValue message = JS_GetPropertyStr(ctx, exc, "message");
+      if (!JS_IsUndefined(message) && !JS_IsException(message)) {
+        const char *msgStr = JS_ToCString(ctx, message);
+        if (msgStr && strlen(msgStr) > 0 && strlen(msgStr) < 1000) { // Limit message length
+          if (!errorMsg.empty()) {
+            errorMsg += " - " + std::string(msgStr);
+          } else {
+            errorMsg = std::string(msgStr);
+          }
+        }
+        if (msgStr) JS_FreeCString(ctx, msgStr);
+      }
+      JS_FreeValue(ctx, message);
+    }
+    
+    // If we still have no message, use a fallback with diagnostic info
+    if (errorMsg.empty()) {
+      errorMsg = "Unknown JavaScript error (tag=" + std::to_string(tag) + 
+                 ", isError=" + (isError ? "true" : "false") + ")";
+    }
+    
+    result.message = std::string(step) + ": " + errorMsg;
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode error at step:', UTF8ToString($0));
+      console.error('❌ Error details:', UTF8ToString($1));
+    }, step, errorMsg.c_str());
+#endif
+    JS_FreeValue(ctx, exc);
+  };
+
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('🔨 Step 1: Compiling JavaScript module');
+    console.log('📝 Code size:', $0, 'bytes');
+  }, code.size());
+#endif
+  
+  // Use /dev/stdin as filename - QuickJS has special handling for this
+  // It checks for "/dev/" prefix and won't try to resolve it as a real path
+  // This should prevent any filesystem resolution attempts during compilation
+  const char* evalFilename = "/dev/stdin";
+  
+  // COMPLETELY disable module loader during compilation
+  // QuickJS should not call the module loader during compilation with COMPILE_ONLY,
+  // but if it does, having no loader should prevent recursion
+  JS_SetModuleLoaderFunc(runtime, nullptr, nullptr, nullptr);
+  
+  // Try compiling the module
+  // With no module loader set, QuickJS should compile without trying to resolve imports
+  // Import resolution will happen later during JS_ResolveModule
+  JSValue moduleFunc = JS_Eval(ctx, code.c_str(), code.size(), evalFilename,
+                               JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+  
+  // Re-enable module loader ONLY after compilation succeeds, for JS_ResolveModule
+  if (!JS_IsException(moduleFunc)) {
+    JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
+  }
+  
+  if (JS_IsException(moduleFunc)) {
+    captureException("Step 1: Compilation failed");
+    JS_FreeContext(ctx);
+    return result;
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 1: Module compiled successfully');
+    console.log('🔨 Step 2: Resolving module dependencies');
+  });
+#endif
+
+  // Now resolve module dependencies (this will use the module loader if there are imports)
+  if (JS_ResolveModule(ctx, moduleFunc) < 0) {
+    captureException("Step 2: Module resolution failed");
+    JS_FreeContext(ctx);
+    return result;
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 2: Module dependencies resolved');
+    console.log('🔨 Step 3: Evaluating module code');
+  });
+#endif
+
+  auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(moduleFunc));
+  JSValue evalResult = JS_EvalFunction(ctx, moduleFunc);
+  if (JS_IsException(evalResult)) {
+    captureException("Step 3: Module evaluation failed");
+    JS_FreeContext(ctx);
+    return result;
+  }
+  JS_FreeValue(ctx, evalResult);
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 3: Module evaluated successfully');
+    console.log('🔨 Step 4: Getting module namespace');
+  });
+#endif
+
+  JSValue moduleNamespace = JS_GetModuleNamespace(ctx, module);
+  if (JS_IsException(moduleNamespace)) {
+    captureException("Step 4: Failed to get module namespace");
+    JS_FreeContext(ctx);
+    return result;
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 4: Module namespace retrieved');
+    console.log('🔨 Step 5: Getting scene export from module');
+  });
+#endif
+
+  JSValue sceneVal = JS_GetPropertyStr(ctx, moduleNamespace, "scene");
+  if (JS_IsException(sceneVal)) {
+    JS_FreeValue(ctx, moduleNamespace);
+    captureException("Step 5: Failed to get 'scene' export from module");
+    JS_FreeContext(ctx);
+    return result;
+  }
+
+  // If scene is undefined, try to find and call a default export function
+  if (JS_IsUndefined(sceneVal)) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.warn('⚠️ Step 5: Scene export is undefined, trying default export');
+    });
+#endif
+    JS_FreeValue(ctx, sceneVal);
+    
+    // Try to get default export
+    JSValue defaultExport = JS_GetPropertyStr(ctx, moduleNamespace, "default");
+    if (!JS_IsUndefined(defaultExport) && JS_IsFunction(ctx, defaultExport)) {
+#ifdef __EMSCRIPTEN__
+      EM_ASM({
+        console.log('🔨 Step 5b: Calling default export function');
+      });
+#endif
+      // Default export is a function, try calling it
+      JSValue callResult = JS_Call(ctx, defaultExport, JS_UNDEFINED, 0, nullptr);
+      if (JS_IsException(callResult)) {
+        JS_FreeValue(ctx, defaultExport);
+        JS_FreeValue(ctx, moduleNamespace);
+        captureException("Step 5b: Calling default export function failed");
+        JS_FreeContext(ctx);
+        return result;
+      }
+      sceneVal = callResult;
+      JS_FreeValue(ctx, defaultExport);
+#ifdef __EMSCRIPTEN__
+      EM_ASM({
+        console.log('✅ Step 5b: Default export function called successfully');
+      });
+#endif
+    } else {
+      JS_FreeValue(ctx, defaultExport);
+      JS_FreeValue(ctx, moduleNamespace);
+      JS_FreeContext(ctx);
+      result.message = "Error: Scene module must export 'scene'. The module was evaluated but no 'scene' export was found. Try: export const scene = cube({ size: [1, 1, 1] });";
+#ifdef __EMSCRIPTEN__
+      EM_ASM({
+        console.error('❌ Step 5: No scene export found, and no default export function available');
+      });
+#endif
+      return result;
+    }
+  } else {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.log('✅ Step 5: Scene export found');
+    });
+#endif
+  }
+  JS_FreeValue(ctx, moduleNamespace);
+
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('🔨 Step 6: Converting scene value to manifold');
+  });
+#endif
+  auto sceneHandle = GetManifoldHandle(ctx, sceneVal);
+  if (!sceneHandle) {
+    // Get type information for better error message
+    int tag = JS_VALUE_GET_TAG(sceneVal);
+    const char* typeStr = "unknown";
+    if (tag == JS_TAG_UNDEFINED) typeStr = "undefined";
+    else if (tag == JS_TAG_NULL) typeStr = "null";
+    else if (tag == JS_TAG_BOOL) typeStr = "boolean";
+    else if (tag == JS_TAG_INT) typeStr = "number (int)";
+    else if (tag == JS_TAG_FLOAT64) typeStr = "number (float)";
+    else if (tag == JS_TAG_STRING) typeStr = "string";
+    else if (tag == JS_TAG_OBJECT) {
+      // Try to get constructor name
+      JSValue constructor = JS_GetPropertyStr(ctx, sceneVal, "constructor");
+      if (!JS_IsUndefined(constructor)) {
+        JSValue name = JS_GetPropertyStr(ctx, constructor, "name");
+        if (!JS_IsUndefined(name)) {
+          const char* nameStr = JS_ToCString(ctx, name);
+          if (nameStr) {
+            typeStr = nameStr;
+            JS_FreeCString(ctx, nameStr);
+          }
+          JS_FreeValue(ctx, name);
+        }
+        JS_FreeValue(ctx, constructor);
+      }
+      if (strcmp(typeStr, "unknown") == 0 || strcmp(typeStr, "Object") == 0) {
+        typeStr = "object (not a manifold)";
+      }
+    }
+    
+    JS_FreeValue(ctx, sceneVal);
+    JS_FreeContext(ctx);
+    result.message = "Error: Exported 'scene' is not a manifold (got: " + std::string(typeStr) + "). Make sure the function returns a valid manifold object created with cube(), sphere(), etc.";
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ Step 6: Scene value is not a manifold, type:', UTF8ToString($0));
+    }, typeStr);
+#endif
+    return result;
+  }
+
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 6: Scene converted to manifold successfully');
+    console.log('🎉 All steps completed - scene loaded successfully!');
+  });
+#endif
+  result.manifold = sceneHandle;
+  result.success = true;
+  result.message = "Scene loaded successfully";
+  JS_FreeValue(ctx, sceneVal);
+  JS_FreeContext(ctx);
+  return result;
+}
+
+#ifdef __EMSCRIPTEN__
+extern "C" {
+// Emscripten export to get the current status message
+EMSCRIPTEN_KEEPALIVE
+const char* getStatusMessage() {
+  if (!g_state.statusMessage) {
+    return "Status not initialized";
+  }
+  return g_state.statusMessage->c_str();
+}
+
+// Forward declarations
+void resetCamera();
+void zoomCameraToFit();
+
+// Emscripten export to load scene from JavaScript code string
+EMSCRIPTEN_KEEPALIVE
+void loadSceneFromCode(const char* code) {
+  if (!code) {
+    EM_ASM({
+      console.error('❌ loadSceneFromCode: Code pointer is null');
+    });
+    return;
+  }
+  
+  if (!g_state.runtime || !g_state.scene || !g_state.model || !g_state.statusMessage) {
+    EM_ASM({
+      console.error('❌ loadSceneFromCode: Global state not initialized');
+      console.error('  - runtime:', $0 ? 'initialized' : 'null');
+      console.error('  - scene:', $1 ? 'initialized' : 'null');
+      console.error('  - model:', $2 ? 'initialized' : 'null');
+      console.error('  - statusMessage:', $3 ? 'initialized' : 'null');
+    }, g_state.runtime, g_state.scene, g_state.model, g_state.statusMessage);
+    return;
+  }
+  
+  EM_ASM({
+    console.log('🚀 loadSceneFromCode called, code length:', $0);
+  }, strlen(code));
+  
+  auto load = LoadSceneFromCode(g_state.runtime, std::string(code));
+  if (load.success) {
+    if (!load.manifold) {
+      *g_state.statusMessage = "Error: Scene loaded but manifold is null";
+      EM_ASM({
+        console.error('❌ Scene loaded but manifold is null');
+      });
+      return;
+    }
+    
+    *g_state.scene = load.manifold;
+    bool replaced = ReplaceScene(*g_state.model, *g_state.scene);
+    if (!replaced) {
+      *g_state.statusMessage = "Error: Failed to replace model with new scene";
+      EM_ASM({
+        console.error('❌ Failed to replace model');
+      });
+      return;
+    }
+    
+    *g_state.statusMessage = "Scene loaded successfully";
+    EM_ASM({
+      console.log('✅ Scene loaded and model replaced successfully');
+    });
+    
+    // Auto-reset camera to fit the loaded scene
+    if (!(*g_state.scene)->IsEmpty()) {
+      resetCamera();
+      EM_ASM({
+        console.log('📷 Camera auto-reset to fit loaded scene');
+      });
+    }
+  } else {
+    // Ensure we always have a meaningful error message
+    std::string errorMsg = load.message.empty() 
+      ? "Unknown error: Scene loading failed but no error message was provided"
+      : load.message;
+    
+    *g_state.statusMessage = errorMsg;
+    EM_ASM({
+      console.error('❌ Failed to load scene');
+      const msg = UTF8ToString($0);
+      if (msg && msg.length > 0) {
+        console.error('❌ Error message:', msg);
+      } else {
+        console.error('❌ Error message: (empty or null)');
+      }
+    }, errorMsg.c_str());
+  }
+}
+
+// Camera state getters
+EMSCRIPTEN_KEEPALIVE
+float getCameraYaw() {
+  return g_state.orbitYaw ? *g_state.orbitYaw : 0.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float getCameraPitch() {
+  return g_state.orbitPitch ? *g_state.orbitPitch : 0.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float getCameraDistance() {
+  return g_state.orbitDistance ? *g_state.orbitDistance : 1.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void getCameraTarget(float *x, float *y, float *z) {
+  if (g_state.camera && x && y && z) {
+    *x = g_state.camera->target.x;
+    *y = g_state.camera->target.y;
+    *z = g_state.camera->target.z;
+  }
+}
+
+// Camera state setters
+EMSCRIPTEN_KEEPALIVE
+void setCameraYaw(float yaw) {
+  if (g_state.orbitYaw) {
+    *g_state.orbitYaw = yaw;
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void setCameraPitch(float pitch) {
+  if (g_state.orbitPitch) {
+    const float limit = DEG2RAD * 89.0f;
+    *g_state.orbitPitch = Clamp(pitch, -limit, limit);
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void setCameraDistance(float distance) {
+  if (g_state.orbitDistance) {
+    *g_state.orbitDistance = Clamp(distance, 1.0f, 50.0f);
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void setCameraTarget(float x, float y, float z) {
+  if (g_state.camera) {
+    g_state.camera->target = {x, y, z};
+  }
+}
+
+// Forward declaration
+void updateCameraPosition();
+
+// Helper function to zoom camera to fit the loaded scene
+void zoomCameraToFit() {
+  if (!g_state.orbitYaw || !g_state.orbitPitch || !g_state.orbitDistance ||
+      !g_state.camera) {
+    return;
+  }
+
+  // Check if we have a loaded scene
+  if (g_state.scene && *g_state.scene && !(*g_state.scene)->IsEmpty()) {
+    // Get bounding box of the loaded scene
+    manifold::Box bbox = (*g_state.scene)->BoundingBox();
+    
+    // Convert bounding box from scene units (mm) to renderer units
+    // Scene units are in mm, we scale by kSceneScale to get renderer units
+    Vector3 bboxMin = {
+      static_cast<float>(bbox.min.x * kSceneScale),
+      static_cast<float>(bbox.min.y * kSceneScale),
+      static_cast<float>(bbox.min.z * kSceneScale)
+    };
+    Vector3 bboxMax = {
+      static_cast<float>(bbox.max.x * kSceneScale),
+      static_cast<float>(bbox.max.y * kSceneScale),
+      static_cast<float>(bbox.max.z * kSceneScale)
+    };
+    
+    // Calculate center of bounding box
+    Vector3 center = {
+      (bboxMin.x + bboxMax.x) * 0.5f,
+      (bboxMin.y + bboxMax.y) * 0.5f,
+      (bboxMin.z + bboxMax.z) * 0.5f
+    };
+    
+    // Calculate size of bounding box
+    Vector3 size = {
+      bboxMax.x - bboxMin.x,
+      bboxMax.y - bboxMin.y,
+      bboxMax.z - bboxMin.z
+    };
+    
+    // Find the maximum dimension
+    float maxSize = std::max(size.x, std::max(size.y, size.z));
+    
+    // If bounding box is valid (has size), calculate zoom to fit
+    if (maxSize > 0.001f) {
+      // Calculate distance needed to fit the object in view
+      // Using camera FOV, we need to fit the object in the view frustum
+      // Add padding factor (3.0x) to ensure object is zoomed out with safe margins
+      const float fovyRad = DEG2RAD * g_state.camera->fovy;
+      const float padding = 3.0f;
+      
+      // Get viewport dimensions to calculate aspect ratio
+      int screenWidth = GetScreenWidth();
+      int screenHeight = GetScreenHeight();
+      float aspectRatio = (screenHeight > 0) ? (float)screenWidth / (float)screenHeight : 1.0f;
+      
+      // Calculate distance needed for vertical fit (using height)
+      float verticalDistance = (size.y * 0.5f * padding) / tanf(fovyRad * 0.5f);
+      
+      // Calculate distance needed for horizontal fit (using width and aspect ratio)
+      // Horizontal FOV is calculated from vertical FOV and aspect ratio
+      float horizontalFovRad = 2.0f * atanf(tanf(fovyRad * 0.5f) * aspectRatio);
+      float horizontalDistance = (std::max(size.x, size.z) * 0.5f * padding) / tanf(horizontalFovRad * 0.5f);
+      
+      // Use the larger distance to ensure object fits in both dimensions
+      float distance = std::max(verticalDistance, horizontalDistance);
+      
+      // Clamp distance to reasonable bounds
+      distance = std::max(1.0f, std::min(distance, 50.0f));
+      
+      // Set camera target to center of bounding box with vertical offset for top margin
+      // Moving target up (increasing Y) makes object appear lower on screen (more top margin)
+      Vector3 targetCenter = center;
+      targetCenter.y += size.y * 0.2f;  // Add 20% of height as offset to create top margin
+      g_state.camera->target = targetCenter;
+      
+      // Set distance
+      *g_state.orbitDistance = distance;
+      
+      // Keep current yaw/pitch (or use initial values if they exist)
+      if (g_state.initialYaw && g_state.initialPitch) {
+        *g_state.orbitYaw = *g_state.initialYaw;
+        *g_state.orbitPitch = *g_state.initialPitch;
+      }
+      
+      // Update camera position
+      updateCameraPosition();
+      return;
+    }
+  }
+  
+  // Fallback to initial camera state if no scene or invalid bounding box
+  if (g_state.initialTarget && g_state.initialDistance &&
+      g_state.initialYaw && g_state.initialPitch) {
+    g_state.camera->target = *g_state.initialTarget;
+    *g_state.orbitDistance = *g_state.initialDistance;
+    *g_state.orbitYaw = *g_state.initialYaw;
+    *g_state.orbitPitch = *g_state.initialPitch;
+    updateCameraPosition();
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void resetCamera() {
+  zoomCameraToFit();
+}
+
+EMSCRIPTEN_KEEPALIVE
+void updateCameraPosition() {
+  if (g_state.camera && g_state.orbitYaw && g_state.orbitPitch && g_state.orbitDistance) {
+    const Vector3 offsets = {
+        *g_state.orbitDistance * cosf(*g_state.orbitPitch) * sinf(*g_state.orbitYaw),
+        *g_state.orbitDistance * sinf(*g_state.orbitPitch),
+        *g_state.orbitDistance * cosf(*g_state.orbitPitch) * cosf(*g_state.orbitYaw)};
+    g_state.camera->position = Vector3Add(g_state.camera->target, offsets);
+    g_state.camera->up = {0.0f, 1.0f, 0.0f};
+  }
+}
+}
+#endif
+
 }  // namespace
 
 int main() {
+  // Guard against double initialization (especially important for Emscripten)
+  static bool initialized = false;
+  if (initialized) {
+    TraceLog(LOG_WARNING, "main() called multiple times, skipping re-initialization");
+    return 0;
+  }
+  initialized = true;
+
+#ifdef __EMSCRIPTEN__
+  // Log build version to console
+  logBuildVersion();
+#endif
+
   SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
-  InitWindow(1280, 720, "dingcad");
+  
+  // Check if window is already initialized before creating a new one
+  if (!IsWindowReady()) {
+    InitWindow(1280, 720, "dingcad");
+  } else {
+    TraceLog(LOG_WARNING, "Window already initialized, skipping InitWindow");
+  }
+  
   SetTargetFPS(60);
 
-  Font brandingFont = GetFontDefault();
-  bool brandingFontCustom = false;
-  const std::filesystem::path consolasPath("/System/Library/Fonts/Supplemental/Consolas.ttf");
-  if (std::filesystem::exists(consolasPath)) {
-    brandingFont = LoadFontEx(consolasPath.string().c_str(), static_cast<int>(kBrandFontSize), nullptr, 0);
-    brandingFontCustom = true;
-  }
+  // Use default font for everything
+  Font defaultFont = GetFontDefault();
 
   Camera3D camera = {0};
-  camera.position = {4.0f, 4.0f, 4.0f};
-  camera.target = {0.0f, 0.5f, 0.0f};
+  // Position camera much closer for a tighter zoom on the WesWorld logo
+  camera.position = {1.2f, 1.2f, 1.2f};  // Zoomed in closer
+  camera.target = {0.0f, 0.0f, 0.0f};  // Center on logo
   camera.up = {0.0f, 1.0f, 0.0f};
   camera.fovy = 45.0f;
   camera.projection = CAMERA_PERSPECTIVE;
@@ -747,16 +1600,22 @@ int main() {
   float orbitYaw = atan2f(camera.position.x - camera.target.x,
                           camera.position.z - camera.target.z);
   float orbitPitch = asinf((camera.position.y - camera.target.y) / orbitDistance);
-  const Vector3 initialTarget = camera.target;
-  const float initialDistance = orbitDistance;
-  const float initialYaw = orbitYaw;
-  const float initialPitch = orbitPitch;
+  Vector3 initialTarget = camera.target;
+  float initialDistance = orbitDistance;
+  float initialYaw = orbitYaw;
+  float initialPitch = orbitPitch;
 
   JSRuntime *runtime = JS_NewRuntime();
   EnsureManifoldClass(runtime);
   JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
 
   std::shared_ptr<manifold::Manifold> scene = nullptr;
+  
+#ifdef __EMSCRIPTEN__
+  // Setup global state for Emscripten exports
+  g_state.runtime = runtime;
+  g_state.scene = &scene;
+#endif
   std::string statusMessage;
   std::filesystem::path scriptPath;
   std::unordered_map<std::filesystem::path, WatchedFile> watchedFiles;
@@ -779,6 +1638,7 @@ int main() {
     }
     watchedFiles = std::move(updated);
   };
+  bool isFirstLoad = true;
   if (defaultScript) {
     scriptPath = std::filesystem::absolute(*defaultScript);
     auto load = LoadSceneFromFile(runtime, scriptPath);
@@ -793,16 +1653,36 @@ int main() {
     }
   }
   if (!scene) {
-    manifold::Manifold cube = manifold::Manifold::Cube({2.0, 2.0, 2.0}, true);
-    manifold::Manifold sphere = manifold::Manifold::Sphere(1.2, 0);
-    manifold::Manifold combo = cube + sphere.Translate({0.0, 0.8, 0.0});
-    scene = std::make_shared<manifold::Manifold>(combo);
+    // Create empty scene (tiny invisible cube) instead of default logo
+    // This ensures the model can be created without crashing
+    manifold::Manifold emptyScene = manifold::Manifold::Cube({0.001, 0.001, 0.001}, true);
+    scene = std::make_shared<manifold::Manifold>(emptyScene);
+    isFirstLoad = false;  // Don't auto-zoom for empty scene
     if (statusMessage.empty()) {
-      reportStatus("No scene.js found. Using built-in sample.");
+      reportStatus("Ready - no scene loaded.");
     }
   }
 
   Model model = CreateRaylibModelFrom(scene->GetMeshGL());
+
+#ifdef __EMSCRIPTEN__
+  // Complete global state setup
+  g_state.model = &model;
+  g_state.statusMessage = &statusMessage;
+  g_state.camera = &camera;
+  g_state.orbitYaw = &orbitYaw;
+  g_state.orbitPitch = &orbitPitch;
+  g_state.orbitDistance = &orbitDistance;
+  g_state.initialTarget = &initialTarget;
+  g_state.initialDistance = &initialDistance;
+  g_state.initialYaw = &initialYaw;
+  g_state.initialPitch = &initialPitch;
+  
+  // Auto-zoom to fit on first load if scene is not empty
+  if (isFirstLoad && scene && !scene->IsEmpty()) {
+    zoomCameraToFit();
+  }
+#endif
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
   Shader toonShader = LoadShaderFromMemory(kToonVS, kToonFS);
@@ -812,9 +1692,6 @@ int main() {
   if (outlineShader.id == 0 || toonShader.id == 0 || normalDepthShader.id == 0 || edgeShader.id == 0) {
     TraceLog(LOG_ERROR, "Failed to load one or more shaders.");
     DestroyModel(model);
-    if (brandingFontCustom) {
-      UnloadFont(brandingFont);
-    }
     JS_FreeRuntime(runtime);
     CloseWindow();
     return 1;
@@ -917,7 +1794,12 @@ int main() {
   const float zNear = 0.01f;
   const float zFar = 1000.0f;
 
-  while (!WindowShouldClose()) {
+  // Code panel state (DevTools-style)
+  bool codePanelVisible = true;  // Start visible
+  float codePanelHeight = 0.0f;  // Will be set to half screen when visible
+
+  // Main loop function - extracted for both desktop and web
+  auto mainLoop = [&]() {
     const Vector2 mouseDelta = GetMouseDelta();
 
     auto reloadScene = [&]() {
@@ -934,6 +1816,8 @@ int main() {
       }
     };
 
+#ifndef __EMSCRIPTEN__
+    // File watching only works on desktop, not in browser
     if (!scriptPath.empty()) {
       bool changed = false;
       for (const auto &entry : watchedFiles) {
@@ -954,6 +1838,7 @@ int main() {
         reloadScene();
       }
     }
+#endif
 
     if (IsKeyPressed(KEY_R) && !scriptPath.empty()) {
       reloadScene();
@@ -994,6 +1879,32 @@ int main() {
       TraceLog(LOG_INFO, "Export trigger detected");
       std::cout << "Export trigger detected" << std::endl;
       if (scene) {
+#ifdef __EMSCRIPTEN__
+        // For web, save to virtual filesystem and trigger download
+        std::filesystem::path savePath = "/ding.stl";
+        std::string error;
+        const bool ok = WriteMeshAsBinaryStl(scene->GetMeshGL(), savePath, error);
+        if (ok) {
+          // Use Emscripten's file download API
+          EM_ASM({
+            const filename = UTF8ToString($0);
+            const path = UTF8ToString($1);
+            const data = FS.readFile(path, {encoding: 'binary'});
+            const blob = new Blob([data], {type: 'application/octet-stream'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, "ding.stl", savePath.string().c_str());
+          reportStatus("Downloaded ding.stl");
+        } else {
+          reportStatus(error);
+        }
+#else
         std::filesystem::path downloads;
         if (const char *home = std::getenv("HOME")) {
           downloads = std::filesystem::path(home) / "Downloads";
@@ -1016,6 +1927,7 @@ int main() {
             reportStatus(error);
           }
         }
+#endif
       } else {
         reportStatus("No scene loaded to export");
       }
@@ -1053,6 +1965,8 @@ int main() {
       orbitPitch = initialPitch;
     }
 
+    // C key toggle removed - panel is now managed through HTML UI
+
     const float moveSpeed = 0.05f * orbitDistance;
     if (IsKeyDown(KEY_W)) camera.target = Vector3Add(camera.target, Vector3Scale(forward, moveSpeed));
     if (IsKeyDown(KEY_S)) camera.target = Vector3Add(camera.target, Vector3Scale(forward, -moveSpeed));
@@ -1068,51 +1982,12 @@ int main() {
     camera.position = Vector3Add(camera.target, offsets);
     camera.up = worldUp;
 
-    const int screenWidth = std::max(GetScreenWidth(), 1);
-    const int screenHeight = std::max(GetScreenHeight(), 1);
-    if (screenWidth != prevScreenWidth || screenHeight != prevScreenHeight) {
-      UnloadRenderTexture(rtColor);
-      UnloadRenderTexture(rtNormalDepth);
-      auto resizedTargets = makeRenderTargets();
-      rtColor = resizedTargets.first;
-      rtNormalDepth = resizedTargets.second;
-      SetShaderValueTexture(edgeShader, locNormDepthTexture, rtNormalDepth.texture);
-      const float texel[2] = {
-          1.0f / static_cast<float>(rtNormalDepth.texture.width),
-          1.0f / static_cast<float>(rtNormalDepth.texture.height)};
-      SetShaderValue(edgeShader, locTexel, texel, SHADER_UNIFORM_VEC2);
-      prevScreenWidth = screenWidth;
-      prevScreenHeight = screenHeight;
-    }
-
-    Matrix view = GetCameraMatrix(camera);
-    Vector3 lightDirVS = {
-        view.m0 * lightDirWS.x + view.m4 * lightDirWS.y + view.m8 * lightDirWS.z,
-        view.m1 * lightDirWS.x + view.m5 * lightDirWS.y + view.m9 * lightDirWS.z,
-        view.m2 * lightDirWS.x + view.m6 * lightDirWS.y + view.m10 * lightDirWS.z};
-    lightDirVS = Vector3Normalize(lightDirVS);
-    SetShaderValue(toonShader, locLightDirVS, &lightDirVS.x, SHADER_UNIFORM_VEC3);
-
-    float outlineThickness = 0.0f;
-    {
-      const float pixels = 2.0f;
-      const float distance = Vector3Distance(camera.position, camera.target);
-      const float screenHeightF = static_cast<float>(screenHeight);
-      const float worldPerPixel = (screenHeightF > 0.0f)
-                                      ? 2.0f * tanf(DEG2RAD * camera.fovy * 0.5f) * distance / screenHeightF
-                                      : 0.0f;
-      outlineThickness = pixels * worldPerPixel;
-    }
-    setOutlineUniforms(outlineThickness, outlineColor);
-
-    SetShaderValue(normalDepthShader, locNear, &zNear, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(normalDepthShader, locFar, &zFar, SHADER_UNIFORM_FLOAT);
-
-    BeginTextureMode(rtColor);
+    BeginDrawing();
     ClearBackground(RAYWHITE);
+
     BeginMode3D(camera);
     DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
-    DrawAxes(2.0f);
+    DrawAxes(0.3f);  // Much smaller axes so they don't dominate the view
 
     rlDisableBackfaceCulling();
     for (int i = 0; i < model.meshCount; ++i) {
@@ -1124,45 +1999,33 @@ int main() {
       DrawMesh(model.meshes[i], toonMat, model.transform);
     }
     EndMode3D();
-    EndTextureMode();
-
-    BeginTextureMode(rtNormalDepth);
-    ClearBackground({127, 127, 255, 0});
-    BeginMode3D(camera);
-    for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], normalDepthMat, model.transform);
-    }
-    EndMode3D();
-    EndTextureMode();
-
-    BeginDrawing();
-    ClearBackground(RAYWHITE);
-
-    const float texel[2] = {
-        1.0f / static_cast<float>(rtNormalDepth.texture.width),
-        1.0f / static_cast<float>(rtNormalDepth.texture.height)};
-    SetShaderValue(edgeShader, locTexel, texel, SHADER_UNIFORM_VEC2);
-
-    BeginShaderMode(edgeShader);
-    const Rectangle srcRect = {0.0f, 0.0f, static_cast<float>(rtColor.texture.width),
-                               -static_cast<float>(rtColor.texture.height)};
-    DrawTextureRec(rtColor.texture, srcRect, {0.0f, 0.0f}, WHITE);
-    EndShaderMode();
 
     const float margin = 20.0f;
-    const Vector2 textSize = MeasureTextEx(brandingFont, kBrandText, kBrandFontSize, 0.0f);
+    constexpr float brandFontSize = 32.0f;  // Larger, more readable
+    const Vector2 textSize = MeasureTextEx(defaultFont, kBrandText, brandFontSize, 0.0f);
+    const int screenWidth = GetScreenWidth();
     const Vector2 brandPos = {
-        static_cast<float>(GetScreenWidth()) - textSize.x - margin,
+        static_cast<float>(screenWidth) - textSize.x - margin,
         margin};
-    DrawTextEx(brandingFont, kBrandText, brandPos, kBrandFontSize, 0.0f, DARKGRAY);
-
-    if (!statusMessage.empty()) {
-      constexpr float statusFontSize = 18.0f;
-      const Vector2 statusPos = {margin, margin};
-      DrawTextEx(brandingFont, statusMessage.c_str(), statusPos, statusFontSize, 0.0f, DARKGRAY);
-    }
+    DrawTextEx(defaultFont, kBrandText, brandPos, brandFontSize, 0.0f, DARKGRAY);
+    
 
     EndDrawing();
+  };
+
+#ifdef __EMSCRIPTEN__
+  // Use Emscripten's main loop for web
+  emscripten_set_main_loop_arg([](void* arg) {
+    auto* loop = static_cast<decltype(mainLoop)*>(arg);
+    (*loop)();
+  }, &mainLoop, 0, 1);
+  
+  // Cleanup will be handled by browser - don't unload here
+  return 0;
+#else
+  // Desktop main loop
+  while (!WindowShouldClose()) {
+    mainLoop();
   }
 
   UnloadRenderTexture(rtColor);
@@ -1172,11 +2035,9 @@ int main() {
   UnloadMaterial(outlineMat);   // also releases the shader
   UnloadShader(edgeShader);
   DestroyModel(model);
-  if (brandingFontCustom) {
-    UnloadFont(brandingFont);
-  }
   JS_FreeRuntime(runtime);
   CloseWindow();
 
   return 0;
+#endif
 }

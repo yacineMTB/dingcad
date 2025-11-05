@@ -1,0 +1,92 @@
+{
+  "timestamp": "2025-11-04T18:46:40Z",
+  "summary": {
+    "total": 10,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 10,
+    "duration": 0
+  },
+  "tests": [
+    {
+      "name": "test_advanced_operations",
+      "type": "unit",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/unit/test_advanced_operations.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    },
+    {
+      "name": "test_boolean_operations",
+      "type": "unit",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/unit/test_boolean_operations.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    },
+    {
+      "name": "test_mesh_operations",
+      "type": "unit",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/unit/test_mesh_operations.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    },
+    {
+      "name": "test_primitives",
+      "type": "unit",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/unit/test_primitives.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    },
+    {
+      "name": "test_transformations",
+      "type": "unit",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/unit/test_transformations.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    },
+    {
+      "name": "test_complex_operations",
+      "type": "integration",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/integration/test_complex_operations.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    },
+    {
+      "name": "test_scene_basic",
+      "type": "scenes",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/scenes/test_scene_basic.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    },
+    {
+      "name": "test_scene_mechanical",
+      "type": "scenes",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/scenes/test_scene_mechanical.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    },
+    {
+      "name": "test_scene_organic",
+      "type": "scenes",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/scenes/test_scene_organic.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    },
+    {
+      "name": "test_performance",
+      "type": "performance",
+      "file": "/Users/wes/Sites/wesworld/dingcad/_/tests/performance/test_performance.js",
+      "status": "skipped",
+      "duration": 0,
+      "error": null
+    }
+  ]
+}

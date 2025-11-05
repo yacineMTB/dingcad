@@ -1,0 +1,71 @@
+name: Update Test Results on Master
+
+# TEMPORARILY DISABLED: Will re-enable after Build Web Version workflow is stable
+# To re-enable: Remove the workflow_dispatch-only trigger and uncomment the push trigger
+
+on:
+  # push:
+  #   branches:
+  #     - master
+  workflow_dispatch:  # Keep manual trigger available for testing
+
+jobs:
+  update-results:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            git \
+            libtbb-dev \
+            jq \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxinerama-dev
+      
+      - name: Install Raylib from source
+        run: |
+          cd /tmp
+          git clone --depth 1 --branch 5.0 https://github.com/raysan5/raylib.git
+          cd raylib
+          mkdir build && cd build
+          cmake .. -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build . -j$(nproc)
+          sudo cmake --install .
+          sudo ldconfig
+      
+      - name: Initialize submodules
+        run: make init
+      
+      - name: Build project
+        run: make build
+      
+      - name: Run tests
+        run: make test
+        continue-on-error: true
+      
+      - name: Commit latest test results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add _/tests/results/latest/ _/tests/results/README.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update test results [skip ci]" || echo "No changes to commit"
+            git push || echo "Push failed or no changes"
+          fi
+

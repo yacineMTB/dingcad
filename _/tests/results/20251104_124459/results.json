@@ -1,0 +1,92 @@
+{
+  "timestamp": "2025-11-04T17:44:59Z",
+  "summary": {
+    "total": 10,
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0,
+    "duration": 45
+  },
+  "tests": [
+    {
+      "name": "test_primitives",
+      "type": "unit",
+      "file": "_/tests/unit/test_primitives.js",
+      "status": "passed",
+      "duration": 2,
+      "error": null
+    },
+    {
+      "name": "test_boolean_operations",
+      "type": "unit",
+      "file": "_/tests/unit/test_boolean_operations.js",
+      "status": "passed",
+      "duration": 3,
+      "error": null
+    },
+    {
+      "name": "test_transformations",
+      "type": "unit",
+      "file": "_/tests/unit/test_transformations.js",
+      "status": "passed",
+      "duration": 1,
+      "error": null
+    },
+    {
+      "name": "test_advanced_operations",
+      "type": "unit",
+      "file": "_/tests/unit/test_advanced_operations.js",
+      "status": "passed",
+      "duration": 4,
+      "error": null
+    },
+    {
+      "name": "test_mesh_operations",
+      "type": "unit",
+      "file": "_/tests/unit/test_mesh_operations.js",
+      "status": "passed",
+      "duration": 5,
+      "error": null
+    },
+    {
+      "name": "test_complex_operations",
+      "type": "integration",
+      "file": "_/tests/integration/test_complex_operations.js",
+      "status": "passed",
+      "duration": 8,
+      "error": null
+    },
+    {
+      "name": "test_scene_basic",
+      "type": "scenes",
+      "file": "_/tests/scenes/test_scene_basic.js",
+      "status": "passed",
+      "duration": 2,
+      "error": null
+    },
+    {
+      "name": "test_scene_mechanical",
+      "type": "scenes",
+      "file": "_/tests/scenes/test_scene_mechanical.js",
+      "status": "passed",
+      "duration": 3,
+      "error": null
+    },
+    {
+      "name": "test_scene_organic",
+      "type": "scenes",
+      "file": "_/tests/scenes/test_scene_organic.js",
+      "status": "passed",
+      "duration": 2,
+      "error": null
+    },
+    {
+      "name": "test_performance",
+      "type": "performance",
+      "file": "_/tests/performance/test_performance.js",
+      "status": "passed",
+      "duration": 15,
+      "error": null
+    }
+  ]
+}
