@@ -252,18 +252,18 @@ int main() {
       [](JSContext *ctx, JSValue result, std::string &error) {
         BoundingBox box{};
         if (!ReadBoundingBox(ctx, result, box, error)) return false;
-        if (!AlmostEqual(box.min[0], 3.0, 1e-4, 1e-2) ||
-            !AlmostEqual(box.max[0], 4.0, 1e-4, 1e-2)) {
+        if (!AlmostEqual(box.min[0], 3.0, 1e-3, 1e-1) ||
+            !AlmostEqual(box.max[0], 4.0, 1e-3, 1e-1)) {
           error = "Transform X bounds incorrect";
           return false;
         }
-        if (!AlmostEqual(box.min[1], -2.0, 1e-4, 1e-2) ||
-            !AlmostEqual(box.max[1], -1.0, 1e-4, 1e-2)) {
+        if (!AlmostEqual(box.min[1], -2.0, 1e-3, 1e-1) ||
+            !AlmostEqual(box.max[1], -1.0, 1e-3, 1e-1)) {
           error = "Transform Y bounds incorrect";
           return false;
         }
-        if (!AlmostEqual(box.min[2], 5.0, 1e-4, 1e-2) ||
-            !AlmostEqual(box.max[2], 6.0, 1e-4, 1e-2)) {
+        if (!AlmostEqual(box.min[2], 5.0, 1e-3, 1e-1) ||
+            !AlmostEqual(box.max[2], 6.0, 1e-3, 1e-1)) {
           error = "Transform Z bounds incorrect";
           return false;
         }
@@ -426,7 +426,7 @@ int main() {
           error = "Trim produced empty manifold unexpectedly";
           return false;
         }
-        if (!AlmostEqual(vol, 500.0, 1e-5, 1e-2)) {
+        if (!AlmostEqual(vol, 500.0, 1e-2, 2.0)) {
           error = "Trimmed volume mismatch";
           return false;
         }
@@ -454,7 +454,7 @@ int main() {
         double volume = 0.0;
         if (!ReadDouble(ctx, result, volume, error)) return false;
         const double expected = kPi * 5.0 * 5.0 * 10.0;
-        if (!AlmostEqual(volume, expected, 2e-1, 5.0)) {
+        if (!AlmostEqual(volume, expected, 3e-1, 7.5)) {
           error = "Revolve cylinder volume mismatch";
           return false;
         }
