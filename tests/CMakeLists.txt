@@ -45,3 +45,19 @@ target_include_directories(js_bindings_properties
 )
 
 add_test(NAME js_bindings_properties COMMAND js_bindings_properties)
+
+add_executable(js_bindings_operations
+  js_bindings_operations.cpp
+)
+
+target_link_libraries(js_bindings_operations
+  PRIVATE
+    dingcad_bindings
+)
+
+target_include_directories(js_bindings_operations
+  PRIVATE
+    ${PROJECT_SOURCE_DIR}/viewer
+)
+
+add_test(NAME js_bindings_operations COMMAND js_bindings_operations)
