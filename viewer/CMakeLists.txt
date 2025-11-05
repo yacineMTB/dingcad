@@ -18,7 +18,7 @@ string(TIMESTAMP BUILD_DATE "%Y%m%d-%H%M%S")
 set(BUILD_VERSION "${BUILD_DATE}-${GIT_COMMIT}")
 
 configure_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/version.h.in
+  ${CMAKE_SOURCE_DIR}/_/viewer/version.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/version.h
   @ONLY
 )

@@ -1576,9 +1576,6 @@ int main() {
   if (outlineShader.id == 0 || toonShader.id == 0 || normalDepthShader.id == 0 || edgeShader.id == 0) {
     TraceLog(LOG_ERROR, "Failed to load one or more shaders.");
     DestroyModel(model);
-    if (brandingFontCustom) {
-      UnloadFont(brandingFont);
-    }
     JS_FreeRuntime(runtime);
     CloseWindow();
     return 1;
@@ -1869,59 +1866,9 @@ int main() {
     camera.position = Vector3Add(camera.target, offsets);
     camera.up = worldUp;
 
-    const int screenWidth = std::max(GetScreenWidth(), 1);
-    const int screenHeight = std::max(GetScreenHeight(), 1);
-    if (screenWidth != prevScreenWidth || screenHeight != prevScreenHeight) {
-      UnloadRenderTexture(rtColor);
-      UnloadRenderTexture(rtNormalDepth);
-      auto resizedTargets = makeRenderTargets();
-      rtColor = resizedTargets.first;
-      rtNormalDepth = resizedTargets.second;
-      SetShaderValueTexture(edgeShader, locNormDepthTexture, rtNormalDepth.texture);
-      const float texel[2] = {
-          1.0f / static_cast<float>(rtNormalDepth.texture.width),
-          1.0f / static_cast<float>(rtNormalDepth.texture.height)};
-      SetShaderValue(edgeShader, locTexel, texel, SHADER_UNIFORM_VEC2);
-      prevScreenWidth = screenWidth;
-      prevScreenHeight = screenHeight;
-    }
-
-    // Adjust viewport if code panel is visible (takes bottom half)
-    codePanelHeight = codePanelVisible ? screenHeight * 0.5f : 0.0f;
-    const int viewportHeight = screenHeight - static_cast<int>(codePanelHeight);
-    
-    // Set viewport to exclude code panel area
-    if (codePanelVisible) {
-      rlViewport(0, 0, screenWidth, viewportHeight);
-    } else {
-      rlViewport(0, 0, screenWidth, screenHeight);
-    }
-
-    Matrix view = GetCameraMatrix(camera);
-    Vector3 lightDirVS = {
-        view.m0 * lightDirWS.x + view.m4 * lightDirWS.y + view.m8 * lightDirWS.z,
-        view.m1 * lightDirWS.x + view.m5 * lightDirWS.y + view.m9 * lightDirWS.z,
-        view.m2 * lightDirWS.x + view.m6 * lightDirWS.y + view.m10 * lightDirWS.z};
-    lightDirVS = Vector3Normalize(lightDirVS);
-    SetShaderValue(toonShader, locLightDirVS, &lightDirVS.x, SHADER_UNIFORM_VEC3);
-
-    float outlineThickness = 0.0f;
-    {
-      const float pixels = 2.0f;
-      const float distance = Vector3Distance(camera.position, camera.target);
-      const float screenHeightF = static_cast<float>(screenHeight);
-      const float worldPerPixel = (screenHeightF > 0.0f)
-                                      ? 2.0f * tanf(DEG2RAD * camera.fovy * 0.5f) * distance / screenHeightF
-                                      : 0.0f;
-      outlineThickness = pixels * worldPerPixel;
-    }
-    setOutlineUniforms(outlineThickness, outlineColor);
-
-    SetShaderValue(normalDepthShader, locNear, &zNear, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(normalDepthShader, locFar, &zFar, SHADER_UNIFORM_FLOAT);
-
-    BeginTextureMode(rtColor);
+    BeginDrawing();
     ClearBackground(RAYWHITE);
+
     BeginMode3D(camera);
     DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
     DrawAxes(0.3f);  // Much smaller axes so they don't dominate the view
@@ -1936,41 +1883,11 @@ int main() {
       DrawMesh(model.meshes[i], toonMat, model.transform);
     }
     EndMode3D();
-    EndTextureMode();
-
-    BeginTextureMode(rtNormalDepth);
-    ClearBackground({127, 127, 255, 0});
-    BeginMode3D(camera);
-    for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], normalDepthMat, model.transform);
-    }
-    EndMode3D();
-    EndTextureMode();
-
-    BeginDrawing();
-    ClearBackground(RAYWHITE);
-
-    const float texel[2] = {
-        1.0f / static_cast<float>(rtNormalDepth.texture.width),
-        1.0f / static_cast<float>(rtNormalDepth.texture.height)};
-    SetShaderValue(edgeShader, locTexel, texel, SHADER_UNIFORM_VEC2);
-
-    BeginShaderMode(edgeShader);
-    const Rectangle srcRect = {0.0f, 0.0f, static_cast<float>(rtColor.texture.width),
-                               -static_cast<float>(rtColor.texture.height)};
-    DrawTextureRec(rtColor.texture, srcRect, {0.0f, 0.0f}, WHITE);
-    EndShaderMode();
-
-    // Reset viewport to full screen for UI drawing
-    rlViewport(0, 0, screenWidth, screenHeight);
-    
-    // Reset OpenGL state for 2D text rendering
-    rlDisableDepthTest();
-    rlSetTexture(0);
 
     const float margin = 20.0f;
     constexpr float brandFontSize = 32.0f;  // Larger, more readable
     const Vector2 textSize = MeasureTextEx(defaultFont, kBrandText, brandFontSize, 0.0f);
+    const int screenWidth = GetScreenWidth();
     const Vector2 brandPos = {
         static_cast<float>(screenWidth) - textSize.x - margin,
         margin};

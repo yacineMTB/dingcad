@@ -39,8 +39,8 @@ set(MANIFOLD_JSBIND OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_CROSS_SECTION OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_EXPORT OFF CACHE BOOL "" FORCE)
 
-# Get the repository root (one level up from web directory)
-get_filename_component(REPO_ROOT "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
+# Get the repository root (two levels up from web directory, since web is in _/web/)
+get_filename_component(REPO_ROOT "${CMAKE_SOURCE_DIR}/../.." ABSOLUTE)
 
 # Generate version header (after REPO_ROOT is defined)
 include(FindGit)
@@ -60,7 +60,7 @@ string(TIMESTAMP BUILD_DATE "%Y%m%d-%H%M%S")
 set(BUILD_VERSION "${BUILD_DATE}-${GIT_COMMIT}")
 
 configure_file(
-  ${REPO_ROOT}/viewer/version.h.in
+  ${REPO_ROOT}/_/viewer/version.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/version.h
   @ONLY
 )

@@ -7,7 +7,7 @@
    - WebAssembly compilation flags
    - QuickJS and Manifold library configuration
 
-2. **GitHub Actions Workflow** (`.github/workflows/build-web.yml`)
+2. **GitHub Actions Workflow** (`_/.github/workflows/build-web.yml`)
    - Automatically builds WebAssembly version on push/PR
    - Builds Raylib for WebAssembly
    - Deploys to GitHub Pages
@@ -92,7 +92,7 @@ source ./emsdk_env.sh
 make web
 
 # Serve
-cd build-web
+cd _/build-web
 python3 -m http.server 8000
 # Open http://localhost:8000/index.html
 ```

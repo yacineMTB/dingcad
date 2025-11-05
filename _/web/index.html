@@ -711,6 +711,7 @@
         
         // Set up resize observer and window resize listener
         let canvasResizeSetup = false;
+        let resizeTimeout = null;
         function setupCanvasResize() {
             if (canvasResizeSetup) return; // Already set up
             const container = document.getElementById('canvas-container');
@@ -720,14 +721,31 @@
             resizeCanvas();
             
             // Use ResizeObserver for better performance and accuracy
+            // Debounce resize events to prevent excessive calls during panel animations
             const resizeObserver = new ResizeObserver(() => {
-                resizeCanvas();
+                // Clear any pending resize
+                if (resizeTimeout) {
+                    clearTimeout(resizeTimeout);
+                }
+                // Debounce resize to avoid triggering during panel animations
+                resizeTimeout = setTimeout(() => {
+                    resizeCanvas();
+                    resizeTimeout = null;
+                }, 150); // 150ms debounce
             });
             resizeObserver.observe(container);
             
             // Fallback to window resize for older browsers
             window.addEventListener('resize', () => {
-                resizeCanvas();
+                // Clear any pending resize
+                if (resizeTimeout) {
+                    clearTimeout(resizeTimeout);
+                }
+                // Debounce resize
+                resizeTimeout = setTimeout(() => {
+                    resizeCanvas();
+                    resizeTimeout = null;
+                }, 150);
             });
             
             canvasResizeSetup = true;
@@ -1053,10 +1071,14 @@
                         editor.render();
                     }, 100);
                 }
+                // Canvas resize will be handled automatically by the debounced ResizeObserver
+                // No need to call resizeCanvas() explicitly - this prevents reload during animation
             } else {
                 // Minimize
                 panel.classList.remove('expanded');
                 panel.classList.add('minimized');
+                // Canvas resize will be handled automatically by the debounced ResizeObserver
+                // No need to call resizeCanvas() explicitly - this prevents reload during animation
             }
         }
         

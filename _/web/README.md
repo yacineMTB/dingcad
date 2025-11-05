@@ -40,13 +40,13 @@ This directory contains the WebAssembly build configuration for DingCAD, allowin
 # From project root
 source $EMSDK/emsdk_env.sh  # If not already in your shell
 
-mkdir -p build-web
-cd build-web
+mkdir -p _/build-web
+cd _/build-web
 emcmake cmake ../web
 emmake make -j$(nproc)
 ```
 
-Output will be in `build-web/`:
+Output will be in `_/build-web/`:
 - `dingcad_viewer.js` - JavaScript wrapper
 - `dingcad_viewer.wasm` - WebAssembly binary
 
@@ -55,11 +55,11 @@ Output will be in `build-web/`:
 1. **Serve the files:**
    ```bash
    # Using Python
-   cd build-web
+   cd _/build-web
    python3 -m http.server 8000
    
    # Or using Node.js
-   npx http-server build-web
+   npx http-server _/build-web
    ```
 
 2. **Open in browser:**

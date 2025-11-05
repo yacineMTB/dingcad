@@ -81,8 +81,8 @@ jobs:
       
       - name: Build WebAssembly version
         run: |
-          mkdir -p build-web
-          cd build-web
+          mkdir -p _/build-web
+          cd _/build-web
           source $EMSDK/emsdk_env.sh
           emcmake cmake ../web \
             -DCMAKE_BUILD_TYPE=Release \
@@ -99,11 +99,11 @@ jobs:
       - name: Prepare web assets
         run: |
           mkdir -p web-dist
-          cp build-web/dingcad_viewer.js web-dist/
-          cp build-web/dingcad_viewer.wasm web-dist/
-          cp build-web/dingcad_viewer.wasm.map web-dist/ || true
-          cp web/index.html web-dist/
-          cp web/simple.html web-dist/ || true
+          cp _/build-web/dingcad_viewer.js web-dist/
+          cp _/build-web/dingcad_viewer.wasm web-dist/
+          cp _/build-web/dingcad_viewer.wasm.map web-dist/ || true
+          cp _/web/index.html web-dist/
+          cp _/web/simple.html web-dist/ || true
           cp scene.js web-dist/ || echo "// Default scene\nconst cube = cube({size: [10, 10, 10]});\nscene = cube;" > web-dist/scene.js
           
           # Copy library files and manifest
