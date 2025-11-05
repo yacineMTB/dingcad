@@ -1423,15 +1423,89 @@ void setCameraTarget(float x, float y, float z) {
   }
 }
 
+// Forward declaration
+void updateCameraPosition();
+
 EMSCRIPTEN_KEEPALIVE
 void resetCamera() {
-  if (g_state.orbitYaw && g_state.orbitPitch && g_state.orbitDistance &&
-      g_state.initialTarget && g_state.initialDistance &&
-      g_state.initialYaw && g_state.initialPitch && g_state.camera) {
+  if (!g_state.orbitYaw || !g_state.orbitPitch || !g_state.orbitDistance ||
+      !g_state.camera) {
+    return;
+  }
+
+  // Check if we have a loaded scene
+  if (g_state.scene && *g_state.scene && !(*g_state.scene)->IsEmpty()) {
+    // Get bounding box of the loaded scene
+    manifold::Box bbox = (*g_state.scene)->BoundingBox();
+    
+    // Convert bounding box from scene units (mm) to renderer units
+    // Scene units are in mm, we scale by kSceneScale to get renderer units
+    Vector3 bboxMin = {
+      static_cast<float>(bbox.min.x * kSceneScale),
+      static_cast<float>(bbox.min.y * kSceneScale),
+      static_cast<float>(bbox.min.z * kSceneScale)
+    };
+    Vector3 bboxMax = {
+      static_cast<float>(bbox.max.x * kSceneScale),
+      static_cast<float>(bbox.max.y * kSceneScale),
+      static_cast<float>(bbox.max.z * kSceneScale)
+    };
+    
+    // Calculate center of bounding box
+    Vector3 center = {
+      (bboxMin.x + bboxMax.x) * 0.5f,
+      (bboxMin.y + bboxMax.y) * 0.5f,
+      (bboxMin.z + bboxMax.z) * 0.5f
+    };
+    
+    // Calculate size of bounding box
+    Vector3 size = {
+      bboxMax.x - bboxMin.x,
+      bboxMax.y - bboxMin.y,
+      bboxMax.z - bboxMin.z
+    };
+    
+    // Find the maximum dimension
+    float maxSize = std::max(size.x, std::max(size.y, size.z));
+    
+    // If bounding box is valid (has size), calculate zoom to fit
+    if (maxSize > 0.001f) {
+      // Calculate distance needed to fit the object in view
+      // Using camera FOV, we need to fit the object in the view frustum
+      // Add padding factor (1.5x) to ensure object isn't at the edge
+      const float fovyRad = DEG2RAD * g_state.camera->fovy;
+      const float padding = 1.5f;
+      float distance = (maxSize * 0.5f * padding) / tanf(fovyRad * 0.5f);
+      
+      // Clamp distance to reasonable bounds
+      distance = std::max(1.0f, std::min(distance, 50.0f));
+      
+      // Set camera target to center of bounding box
+      g_state.camera->target = center;
+      
+      // Set distance
+      *g_state.orbitDistance = distance;
+      
+      // Keep current yaw/pitch (or use initial values if they exist)
+      if (g_state.initialYaw && g_state.initialPitch) {
+        *g_state.orbitYaw = *g_state.initialYaw;
+        *g_state.orbitPitch = *g_state.initialPitch;
+      }
+      
+      // Update camera position
+      updateCameraPosition();
+      return;
+    }
+  }
+  
+  // Fallback to initial camera state if no scene or invalid bounding box
+  if (g_state.initialTarget && g_state.initialDistance &&
+      g_state.initialYaw && g_state.initialPitch) {
     g_state.camera->target = *g_state.initialTarget;
     *g_state.orbitDistance = *g_state.initialDistance;
     *g_state.orbitYaw = *g_state.initialYaw;
     *g_state.orbitPitch = *g_state.initialPitch;
+    updateCameraPosition();
   }
 }
 
