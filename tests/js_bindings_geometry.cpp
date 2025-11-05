@@ -185,7 +185,8 @@ int main() {
 (() => {
   const block = cube({ size: [20, 20, 20], center: true });
   const hole = sphere({ radius: 8 });
-  return difference(block, hole);
+  const smoothHole = refineToTolerance(hole, 0.5);
+  return difference(block, smoothHole);
 })()
 )JS",
           [](const manifold::Manifold &shape, std::string &msg) {
