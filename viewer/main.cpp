@@ -5,6 +5,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <emscripten/html5.h>
+#include <cstring>
 #endif
 
 #include <algorithm>
@@ -34,7 +35,32 @@ extern "C" {
 #include "manifold/polygon.h"
 #include "js_bindings.h"
 
+// Version header (generated at build time)
+#ifdef BUILD_VERSION
+#include "version.h"
+#else
+#define BUILD_VERSION "dev"
+#define BUILD_DATE "unknown"
+#define BUILD_COMMIT "unknown"
+#endif
+
 namespace {
+#ifdef __EMSCRIPTEN__
+// Log build version to console on initialization
+extern "C" {
+EMSCRIPTEN_KEEPALIVE
+void logBuildVersion() {
+  EM_ASM({
+    console.log('═══════════════════════════════════════');
+    console.log('🚀 DingCAD Web Viewer');
+    console.log('📦 Build Version: ' + UTF8ToString($0));
+    console.log('📅 Build Date: ' + UTF8ToString($1));
+    console.log('🔖 Commit: ' + UTF8ToString($2));
+    console.log('═══════════════════════════════════════');
+  }, BUILD_VERSION, BUILD_DATE, BUILD_COMMIT);
+}
+}
+#endif
 const Color kBaseColor = {210, 210, 220, 255};
 const char *kBrandText = "dingcad";
 constexpr float kBrandFontSize = 28.0f;
@@ -449,8 +475,66 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path &path) {
 #endif
 }
 
+// Track modules being loaded to prevent recursion
+static std::set<std::string> g_loading_modules;
+
+// Dummy module loader that returns an empty module during compilation
+// This prevents QuickJS from recursing when trying to resolve imports during compilation
+// The real resolution will happen later during JS_ResolveModule
+JSModuleDef *DummyModuleLoader(JSContext *ctx, const char *module_name, void *opaque) {
+  std::string modName(module_name);
+  
+  // Check if we're already loading this module to prevent recursion
+  if (g_loading_modules.find(modName) != g_loading_modules.end()) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ Recursion detected in DummyModuleLoader for:', UTF8ToString($0));
+    }, module_name);
+#endif
+    // Return nullptr to break recursion - QuickJS will handle the error
+    return nullptr;
+  }
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.warn('⚠️ DummyModuleLoader called during compilation for:', UTF8ToString($0));
+  }, module_name);
+#endif
+  
+  // Mark as loading
+  g_loading_modules.insert(modName);
+  
+  // Create a minimal empty module WITHOUT calling JS_Eval (which would trigger the loader again)
+  // Instead, we'll create a module using QuickJS's internal APIs
+  // But since we can't easily do that, let's just return nullptr and let QuickJS handle it
+  // The key is to prevent infinite recursion by not calling JS_Eval here
+  
+  // Remove from loading set before returning
+  g_loading_modules.erase(modName);
+  
+  // Return nullptr - this will cause QuickJS to throw an error, but that's better than recursion
+  // The error will be caught and handled properly during JS_ResolveModule
+  JS_ThrowReferenceError(ctx, "Module '%s' cannot be loaded during compilation (deferred to resolution phase)", module_name);
+  return nullptr;
+}
+
 JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, void *opaque) {
   auto *data = static_cast<ModuleLoaderData *>(opaque);
+  
+  // Ignore special inline module names that shouldn't go through the filesystem loader
+  // These are used for inline code evaluation and shouldn't trigger filesystem resolution
+  if (strncmp(module_name, "<", 1) == 0 || strncmp(module_name, "/dev/", 5) == 0) {
+    // This is an inline module (like <inline-scene>, <cmdline>, or /dev/stdin)
+    // QuickJS uses these for inline code and shouldn't try to load them via filesystem
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.warn('⚠️ ModuleLoader called for inline module:', UTF8ToString($0), '- this should not happen during compilation');
+    }, module_name);
+#endif
+    JS_ThrowReferenceError(ctx, "Module '%s' is an inline module and cannot be loaded via filesystem", module_name);
+    return nullptr;
+  }
+  
   std::filesystem::path resolved(module_name);
   if (resolved.is_relative()) {
     const std::filesystem::path base = data && !data->baseDir.empty()
@@ -460,6 +544,24 @@ JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, voi
   }
   resolved = std::filesystem::absolute(resolved).lexically_normal();
 
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('📦 ModuleLoader called for:', UTF8ToString($0));
+    console.log('📦 Current dependencies count:', $1);
+  }, resolved.string().c_str(), data ? data->dependencies.size() : 0);
+#endif
+
+  // Check for circular dependency to prevent stack overflow
+  if (data && data->dependencies.find(resolved) != data->dependencies.end()) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('⚠️ Circular dependency detected:', UTF8ToString($0));
+    }, resolved.string().c_str());
+#endif
+    JS_ThrowReferenceError(ctx, "Circular dependency detected: module '%s' is already being loaded", resolved.string().c_str());
+    return nullptr;
+  }
+
   if (data) {
     data->baseDir = resolved.parent_path();
     data->dependencies.insert(resolved);
@@ -468,18 +570,43 @@ JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, voi
   auto source = ReadTextFile(resolved);
   if (!source) {
     JS_ThrowReferenceError(ctx, "Unable to load module '%s'", resolved.string().c_str());
+    if (data) {
+      data->dependencies.erase(resolved);
+    }
     return nullptr;
   }
 
   const std::string moduleName = resolved.string();
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('🔨 Compiling module in loader:', UTF8ToString($0), 'size:', $1);
+  }, moduleName.c_str(), source->size());
+#endif
+  
   JSValue funcVal = JS_Eval(ctx, source->c_str(), source->size(), moduleName.c_str(),
                             JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
   if (JS_IsException(funcVal)) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ Module compilation failed in loader:', UTF8ToString($0));
+    }, moduleName.c_str());
+#endif
+    if (data) {
+      data->dependencies.erase(resolved);
+    }
     return nullptr;
   }
 
   auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(funcVal));
   JS_FreeValue(ctx, funcVal);
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Module loaded successfully:', UTF8ToString($0));
+  }, moduleName.c_str());
+#endif
+  
   return module;
 }
 
@@ -604,51 +731,610 @@ bool ReplaceScene(Model &model,
   return true;
 }
 
+// Global state for runtime scene loading (used by Emscripten exports)
+struct GlobalState {
+  JSRuntime *runtime = nullptr;
+  std::shared_ptr<manifold::Manifold> *scene = nullptr;
+  Model *model = nullptr;
+  std::string *statusMessage = nullptr;
+  // Camera state pointers
+  Camera3D *camera = nullptr;
+  float *orbitYaw = nullptr;
+  float *orbitPitch = nullptr;
+  float *orbitDistance = nullptr;
+  Vector3 *initialTarget = nullptr;
+  float *initialDistance = nullptr;
+  float *initialYaw = nullptr;
+  float *initialPitch = nullptr;
+};
+
+GlobalState g_state;
+
+LoadResult LoadSceneFromCode(JSRuntime *runtime, const std::string &code) {
+  LoadResult result;
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('📝 LoadSceneFromCode: Starting scene load, code size:', $0, 'bytes');
+    if ($0 > 0 && $1) {
+      const fullCode = UTF8ToString($1);
+      const preview = fullCode.substring(0, Math.min(200, fullCode.length));
+      const display = fullCode.length > 200 ? preview + '...' : preview;
+      console.log('📝 Code preview:', display);
+    }
+  }, code.size(), code.empty() ? nullptr : code.c_str());
+#endif
+  
+  if (code.empty()) {
+    result.message = "Error: No code provided. The scene code is empty.";
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode: Code is empty');
+    });
+#endif
+    return result;
+  }
+  
+#ifdef __EMSCRIPTEN__
+  // Write code to virtual filesystem
+  const char* virtualPath = "/tmp/scene.js";
+  EM_ASM({
+    console.log('💾 Writing code to virtual filesystem:', UTF8ToString($0));
+  }, virtualPath);
+  FILE* file = fopen(virtualPath, "w");
+  if (!file) {
+    result.message = "Error: Unable to write to virtual filesystem at " + std::string(virtualPath);
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode: Failed to open file for writing');
+    });
+#endif
+    return result;
+  }
+  size_t written = fwrite(code.c_str(), 1, code.size(), file);
+  fclose(file);
+  if (written != code.size()) {
+    result.message = "Error: Failed to write all code to virtual filesystem (wrote " + 
+                     std::to_string(written) + " of " + std::to_string(code.size()) + " bytes)";
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode: Incomplete write');
+    });
+#endif
+    return result;
+  }
+  EM_ASM({
+    console.log('✅ Code written to virtual filesystem');
+  });
+  
+  // Load from virtual file
+  std::filesystem::path scriptPath(virtualPath);
+#else
+  // For desktop, write to temp file
+  std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "dingcad_scene.js";
+  std::ofstream outFile(tempPath);
+  if (!outFile) {
+    result.message = "Error: Unable to write temporary file to " + tempPath.string();
+    return result;
+  }
+  outFile << code;
+  outFile.close();
+  std::filesystem::path scriptPath = tempPath;
+#endif
+
+  // Clear and initialize module loader data to prevent circular dependencies
+  g_module_loader_data.baseDir = scriptPath.parent_path();
+  g_module_loader_data.dependencies.clear();
+  // Don't insert scriptPath here - it will be added by the module loader if needed
+  // This prevents the module loader from thinking we're already loading this module
+  
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('🔧 Creating JS context and registering bindings');
+  });
+#endif
+  JSContext *ctx = JS_NewContext(runtime);
+  if (!ctx) {
+    result.message = "Error: Failed to create JavaScript context";
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode: Failed to create JS context');
+    });
+#endif
+    return result;
+  }
+  RegisterBindings(ctx);
+
+  auto captureException = [&](const char* step) {
+    JSValue exc = JS_GetException(ctx);
+    std::string errorMsg;
+    
+    // Check what type of exception we have
+    int tag = JS_VALUE_GET_TAG(exc);
+    bool isError = JS_IsError(ctx, exc);
+    
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('🔍 Exception type tag:', $0, 'isError:', $1);
+    }, tag, isError ? 1 : 0);
+#endif
+    
+    // Try to get a simple error message first to avoid recursion
+    // If we get a stack overflow error, trying to extract details might cause more recursion
+    const char *excStr = nullptr;
+    try {
+      excStr = JS_ToCString(ctx, exc);
+      if (excStr && strlen(excStr) > 0) {
+        errorMsg = excStr;
+        // Check if this is a stack overflow error - if so, don't try to get more details
+        if (errorMsg.find("Maximum call stack size exceeded") != std::string::npos ||
+            errorMsg.find("stack size exceeded") != std::string::npos) {
+          JS_FreeCString(ctx, excStr);
+          result.message = std::string(step) + ": " + errorMsg + " (preventing further recursion)";
+#ifdef __EMSCRIPTEN__
+          EM_ASM({
+            console.error('❌ LoadSceneFromCode error at step:', UTF8ToString($0));
+            console.error('❌ Error details:', UTF8ToString($1));
+          }, step, errorMsg.c_str());
+#endif
+          JS_FreeValue(ctx, exc);
+          return; // Early return to avoid any property access that might cause recursion
+        }
+      }
+      if (excStr) JS_FreeCString(ctx, excStr);
+    } catch (...) {
+      // If even converting to string fails, use a fallback
+      if (excStr) JS_FreeCString(ctx, excStr);
+      errorMsg = "Error extracting exception details (exception access failed)";
+    }
+    
+    // Only try to get more details if we didn't get a stack overflow error
+    if (isError && errorMsg.find("Maximum call stack size exceeded") == std::string::npos) {
+      // Try to get name property first (error type)
+      JSValue name = JS_GetPropertyStr(ctx, exc, "name");
+      if (!JS_IsUndefined(name) && !JS_IsException(name)) {
+        const char *nameStr = JS_ToCString(ctx, name);
+        if (nameStr && strlen(nameStr) > 0) {
+          if (!errorMsg.empty()) {
+            errorMsg = std::string(nameStr) + ": " + errorMsg;
+          } else {
+            errorMsg = std::string(nameStr);
+          }
+        }
+        if (nameStr) JS_FreeCString(ctx, nameStr);
+      }
+      JS_FreeValue(ctx, name);
+      
+      // Try to get message property (but limit length to avoid huge messages)
+      JSValue message = JS_GetPropertyStr(ctx, exc, "message");
+      if (!JS_IsUndefined(message) && !JS_IsException(message)) {
+        const char *msgStr = JS_ToCString(ctx, message);
+        if (msgStr && strlen(msgStr) > 0 && strlen(msgStr) < 1000) { // Limit message length
+          if (!errorMsg.empty()) {
+            errorMsg += " - " + std::string(msgStr);
+          } else {
+            errorMsg = std::string(msgStr);
+          }
+        }
+        if (msgStr) JS_FreeCString(ctx, msgStr);
+      }
+      JS_FreeValue(ctx, message);
+    }
+    
+    // If we still have no message, use a fallback with diagnostic info
+    if (errorMsg.empty()) {
+      errorMsg = "Unknown JavaScript error (tag=" + std::to_string(tag) + 
+                 ", isError=" + (isError ? "true" : "false") + ")";
+    }
+    
+    result.message = std::string(step) + ": " + errorMsg;
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ LoadSceneFromCode error at step:', UTF8ToString($0));
+      console.error('❌ Error details:', UTF8ToString($1));
+    }, step, errorMsg.c_str());
+#endif
+    JS_FreeValue(ctx, exc);
+  };
+
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('🔨 Step 1: Compiling JavaScript module');
+    console.log('📝 Code size:', $0, 'bytes');
+  }, code.size());
+#endif
+  
+  // Use /dev/stdin as filename - QuickJS has special handling for this
+  // It checks for "/dev/" prefix and won't try to resolve it as a real path
+  // This should prevent any filesystem resolution attempts during compilation
+  const char* evalFilename = "/dev/stdin";
+  
+  // COMPLETELY disable module loader during compilation
+  // QuickJS should not call the module loader during compilation with COMPILE_ONLY,
+  // but if it does, having no loader should prevent recursion
+  JS_SetModuleLoaderFunc(runtime, nullptr, nullptr, nullptr);
+  
+  // Try compiling the module
+  // With no module loader set, QuickJS should compile without trying to resolve imports
+  // Import resolution will happen later during JS_ResolveModule
+  JSValue moduleFunc = JS_Eval(ctx, code.c_str(), code.size(), evalFilename,
+                               JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+  
+  // Re-enable module loader ONLY after compilation succeeds, for JS_ResolveModule
+  if (!JS_IsException(moduleFunc)) {
+    JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
+  }
+  
+  if (JS_IsException(moduleFunc)) {
+    captureException("Step 1: Compilation failed");
+    JS_FreeContext(ctx);
+    return result;
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 1: Module compiled successfully');
+    console.log('🔨 Step 2: Resolving module dependencies');
+  });
+#endif
+
+  // Now resolve module dependencies (this will use the module loader if there are imports)
+  if (JS_ResolveModule(ctx, moduleFunc) < 0) {
+    captureException("Step 2: Module resolution failed");
+    JS_FreeContext(ctx);
+    return result;
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 2: Module dependencies resolved');
+    console.log('🔨 Step 3: Evaluating module code');
+  });
+#endif
+
+  auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(moduleFunc));
+  JSValue evalResult = JS_EvalFunction(ctx, moduleFunc);
+  if (JS_IsException(evalResult)) {
+    captureException("Step 3: Module evaluation failed");
+    JS_FreeContext(ctx);
+    return result;
+  }
+  JS_FreeValue(ctx, evalResult);
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 3: Module evaluated successfully');
+    console.log('🔨 Step 4: Getting module namespace');
+  });
+#endif
+
+  JSValue moduleNamespace = JS_GetModuleNamespace(ctx, module);
+  if (JS_IsException(moduleNamespace)) {
+    captureException("Step 4: Failed to get module namespace");
+    JS_FreeContext(ctx);
+    return result;
+  }
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 4: Module namespace retrieved');
+    console.log('🔨 Step 5: Getting scene export from module');
+  });
+#endif
+
+  JSValue sceneVal = JS_GetPropertyStr(ctx, moduleNamespace, "scene");
+  if (JS_IsException(sceneVal)) {
+    JS_FreeValue(ctx, moduleNamespace);
+    captureException("Step 5: Failed to get 'scene' export from module");
+    JS_FreeContext(ctx);
+    return result;
+  }
+
+  // If scene is undefined, try to find and call a default export function
+  if (JS_IsUndefined(sceneVal)) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.warn('⚠️ Step 5: Scene export is undefined, trying default export');
+    });
+#endif
+    JS_FreeValue(ctx, sceneVal);
+    
+    // Try to get default export
+    JSValue defaultExport = JS_GetPropertyStr(ctx, moduleNamespace, "default");
+    if (!JS_IsUndefined(defaultExport) && JS_IsFunction(ctx, defaultExport)) {
+#ifdef __EMSCRIPTEN__
+      EM_ASM({
+        console.log('🔨 Step 5b: Calling default export function');
+      });
+#endif
+      // Default export is a function, try calling it
+      JSValue callResult = JS_Call(ctx, defaultExport, JS_UNDEFINED, 0, nullptr);
+      if (JS_IsException(callResult)) {
+        JS_FreeValue(ctx, defaultExport);
+        JS_FreeValue(ctx, moduleNamespace);
+        captureException("Step 5b: Calling default export function failed");
+        JS_FreeContext(ctx);
+        return result;
+      }
+      sceneVal = callResult;
+      JS_FreeValue(ctx, defaultExport);
+#ifdef __EMSCRIPTEN__
+      EM_ASM({
+        console.log('✅ Step 5b: Default export function called successfully');
+      });
+#endif
+    } else {
+      JS_FreeValue(ctx, defaultExport);
+      JS_FreeValue(ctx, moduleNamespace);
+      JS_FreeContext(ctx);
+      result.message = "Error: Scene module must export 'scene'. The module was evaluated but no 'scene' export was found. Try: export const scene = cube({ size: [1, 1, 1] });";
+#ifdef __EMSCRIPTEN__
+      EM_ASM({
+        console.error('❌ Step 5: No scene export found, and no default export function available');
+      });
+#endif
+      return result;
+    }
+  } else {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.log('✅ Step 5: Scene export found');
+    });
+#endif
+  }
+  JS_FreeValue(ctx, moduleNamespace);
+
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('🔨 Step 6: Converting scene value to manifold');
+  });
+#endif
+  auto sceneHandle = GetManifoldHandle(ctx, sceneVal);
+  if (!sceneHandle) {
+    // Get type information for better error message
+    int tag = JS_VALUE_GET_TAG(sceneVal);
+    const char* typeStr = "unknown";
+    if (tag == JS_TAG_UNDEFINED) typeStr = "undefined";
+    else if (tag == JS_TAG_NULL) typeStr = "null";
+    else if (tag == JS_TAG_BOOL) typeStr = "boolean";
+    else if (tag == JS_TAG_INT) typeStr = "number (int)";
+    else if (tag == JS_TAG_FLOAT64) typeStr = "number (float)";
+    else if (tag == JS_TAG_STRING) typeStr = "string";
+    else if (tag == JS_TAG_OBJECT) {
+      // Try to get constructor name
+      JSValue constructor = JS_GetPropertyStr(ctx, sceneVal, "constructor");
+      if (!JS_IsUndefined(constructor)) {
+        JSValue name = JS_GetPropertyStr(ctx, constructor, "name");
+        if (!JS_IsUndefined(name)) {
+          const char* nameStr = JS_ToCString(ctx, name);
+          if (nameStr) {
+            typeStr = nameStr;
+            JS_FreeCString(ctx, nameStr);
+          }
+          JS_FreeValue(ctx, name);
+        }
+        JS_FreeValue(ctx, constructor);
+      }
+      if (strcmp(typeStr, "unknown") == 0 || strcmp(typeStr, "Object") == 0) {
+        typeStr = "object (not a manifold)";
+      }
+    }
+    
+    JS_FreeValue(ctx, sceneVal);
+    JS_FreeContext(ctx);
+    result.message = "Error: Exported 'scene' is not a manifold (got: " + std::string(typeStr) + "). Make sure the function returns a valid manifold object created with cube(), sphere(), etc.";
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+      console.error('❌ Step 6: Scene value is not a manifold, type:', UTF8ToString($0));
+    }, typeStr);
+#endif
+    return result;
+  }
+
+#ifdef __EMSCRIPTEN__
+  EM_ASM({
+    console.log('✅ Step 6: Scene converted to manifold successfully');
+    console.log('🎉 All steps completed - scene loaded successfully!');
+  });
+#endif
+  result.manifold = sceneHandle;
+  result.success = true;
+  result.message = "Scene loaded successfully";
+  JS_FreeValue(ctx, sceneVal);
+  JS_FreeContext(ctx);
+  return result;
+}
+
+#ifdef __EMSCRIPTEN__
+extern "C" {
+// Emscripten export to get the current status message
+EMSCRIPTEN_KEEPALIVE
+const char* getStatusMessage() {
+  if (!g_state.statusMessage) {
+    return "Status not initialized";
+  }
+  return g_state.statusMessage->c_str();
+}
+
+// Emscripten export to load scene from JavaScript code string
+EMSCRIPTEN_KEEPALIVE
+void loadSceneFromCode(const char* code) {
+  if (!code) {
+    EM_ASM({
+      console.error('❌ loadSceneFromCode: Code pointer is null');
+    });
+    return;
+  }
+  
+  if (!g_state.runtime || !g_state.scene || !g_state.model || !g_state.statusMessage) {
+    EM_ASM({
+      console.error('❌ loadSceneFromCode: Global state not initialized');
+      console.error('  - runtime:', $0 ? 'initialized' : 'null');
+      console.error('  - scene:', $1 ? 'initialized' : 'null');
+      console.error('  - model:', $2 ? 'initialized' : 'null');
+      console.error('  - statusMessage:', $3 ? 'initialized' : 'null');
+    }, g_state.runtime, g_state.scene, g_state.model, g_state.statusMessage);
+    return;
+  }
+  
+  EM_ASM({
+    console.log('🚀 loadSceneFromCode called, code length:', $0);
+  }, strlen(code));
+  
+  auto load = LoadSceneFromCode(g_state.runtime, std::string(code));
+  if (load.success) {
+    if (!load.manifold) {
+      *g_state.statusMessage = "Error: Scene loaded but manifold is null";
+      EM_ASM({
+        console.error('❌ Scene loaded but manifold is null');
+      });
+      return;
+    }
+    
+    *g_state.scene = load.manifold;
+    bool replaced = ReplaceScene(*g_state.model, *g_state.scene);
+    if (!replaced) {
+      *g_state.statusMessage = "Error: Failed to replace model with new scene";
+      EM_ASM({
+        console.error('❌ Failed to replace model');
+      });
+      return;
+    }
+    
+    *g_state.statusMessage = "Scene loaded successfully";
+    EM_ASM({
+      console.log('✅ Scene loaded and model replaced successfully');
+    });
+  } else {
+    // Ensure we always have a meaningful error message
+    std::string errorMsg = load.message.empty() 
+      ? "Unknown error: Scene loading failed but no error message was provided"
+      : load.message;
+    
+    *g_state.statusMessage = errorMsg;
+    EM_ASM({
+      console.error('❌ Failed to load scene');
+      const msg = UTF8ToString($0);
+      if (msg && msg.length > 0) {
+        console.error('❌ Error message:', msg);
+      } else {
+        console.error('❌ Error message: (empty or null)');
+      }
+    }, errorMsg.c_str());
+  }
+}
+
+// Camera state getters
+EMSCRIPTEN_KEEPALIVE
+float getCameraYaw() {
+  return g_state.orbitYaw ? *g_state.orbitYaw : 0.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float getCameraPitch() {
+  return g_state.orbitPitch ? *g_state.orbitPitch : 0.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float getCameraDistance() {
+  return g_state.orbitDistance ? *g_state.orbitDistance : 1.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void getCameraTarget(float *x, float *y, float *z) {
+  if (g_state.camera && x && y && z) {
+    *x = g_state.camera->target.x;
+    *y = g_state.camera->target.y;
+    *z = g_state.camera->target.z;
+  }
+}
+
+// Camera state setters
+EMSCRIPTEN_KEEPALIVE
+void setCameraYaw(float yaw) {
+  if (g_state.orbitYaw) {
+    *g_state.orbitYaw = yaw;
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void setCameraPitch(float pitch) {
+  if (g_state.orbitPitch) {
+    const float limit = DEG2RAD * 89.0f;
+    *g_state.orbitPitch = Clamp(pitch, -limit, limit);
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void setCameraDistance(float distance) {
+  if (g_state.orbitDistance) {
+    *g_state.orbitDistance = Clamp(distance, 1.0f, 50.0f);
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void setCameraTarget(float x, float y, float z) {
+  if (g_state.camera) {
+    g_state.camera->target = {x, y, z};
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void resetCamera() {
+  if (g_state.orbitYaw && g_state.orbitPitch && g_state.orbitDistance &&
+      g_state.initialTarget && g_state.initialDistance &&
+      g_state.initialYaw && g_state.initialPitch && g_state.camera) {
+    g_state.camera->target = *g_state.initialTarget;
+    *g_state.orbitDistance = *g_state.initialDistance;
+    *g_state.orbitYaw = *g_state.initialYaw;
+    *g_state.orbitPitch = *g_state.initialPitch;
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void updateCameraPosition() {
+  if (g_state.camera && g_state.orbitYaw && g_state.orbitPitch && g_state.orbitDistance) {
+    const Vector3 offsets = {
+        *g_state.orbitDistance * cosf(*g_state.orbitPitch) * sinf(*g_state.orbitYaw),
+        *g_state.orbitDistance * sinf(*g_state.orbitPitch),
+        *g_state.orbitDistance * cosf(*g_state.orbitPitch) * cosf(*g_state.orbitYaw)};
+    g_state.camera->position = Vector3Add(g_state.camera->target, offsets);
+    g_state.camera->up = {0.0f, 1.0f, 0.0f};
+  }
+}
+}
+#endif
+
 }  // namespace
 
 int main() {
+  // Guard against double initialization (especially important for Emscripten)
+  static bool initialized = false;
+  if (initialized) {
+    TraceLog(LOG_WARNING, "main() called multiple times, skipping re-initialization");
+    return 0;
+  }
+  initialized = true;
+
+#ifdef __EMSCRIPTEN__
+  // Log build version to console
+  logBuildVersion();
+#endif
+
   SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
-  InitWindow(1280, 720, "dingcad");
+  
+  // Check if window is already initialized before creating a new one
+  if (!IsWindowReady()) {
+    InitWindow(1280, 720, "dingcad");
+  } else {
+    TraceLog(LOG_WARNING, "Window already initialized, skipping InitWindow");
+  }
+  
   SetTargetFPS(60);
 
-  Font brandingFont = GetFontDefault();
-  bool brandingFontCustom = false;
-  
-  // Try to load Consolas font from common system locations (cross-platform)
-  std::vector<std::filesystem::path> fontPaths = {
-    // macOS
-    "/System/Library/Fonts/Supplemental/Consolas.ttf",
-    "/Library/Fonts/Consolas.ttf",
-    // Windows (common locations)
-    "C:/Windows/Fonts/consola.ttf",
-    "C:/Windows/Fonts/consolab.ttf",
-    "C:/Windows/Fonts/consolai.ttf",
-    "C:/Windows/Fonts/consolaz.ttf",
-    // Linux (common locations)
-    "/usr/share/fonts/truetype/consola/Consola.ttf",
-    "/usr/share/fonts/TTF/Consolas.ttf",
-    "/usr/local/share/fonts/Consolas.ttf",
-  };
-  
-  // Also check environment-specific font directories
-  if (const char *home = std::getenv("HOME")) {
-    std::filesystem::path homePath(home);
-    fontPaths.push_back(homePath / ".fonts" / "Consolas.ttf");
-    fontPaths.push_back(homePath / ".local" / "share" / "fonts" / "Consolas.ttf");
-  }
-  
-  // Try to load the first available font
-  for (const auto &fontPath : fontPaths) {
-    if (std::filesystem::exists(fontPath)) {
-      brandingFont = LoadFontEx(fontPath.string().c_str(), static_cast<int>(kBrandFontSize), nullptr, 0);
-      brandingFontCustom = true;
-      break;
-    }
-  }
+  // Use default font for everything
+  Font defaultFont = GetFontDefault();
 
   Camera3D camera = {0};
-  camera.position = {4.0f, 4.0f, 4.0f};
-  camera.target = {0.0f, 0.5f, 0.0f};
+  // Position camera much closer for a tighter zoom on the WesWorld logo
+  camera.position = {1.2f, 1.2f, 1.2f};  // Zoomed in closer
+  camera.target = {0.0f, 0.0f, 0.0f};  // Center on logo
   camera.up = {0.0f, 1.0f, 0.0f};
   camera.fovy = 45.0f;
   camera.projection = CAMERA_PERSPECTIVE;
@@ -657,16 +1343,22 @@ int main() {
   float orbitYaw = atan2f(camera.position.x - camera.target.x,
                           camera.position.z - camera.target.z);
   float orbitPitch = asinf((camera.position.y - camera.target.y) / orbitDistance);
-  const Vector3 initialTarget = camera.target;
-  const float initialDistance = orbitDistance;
-  const float initialYaw = orbitYaw;
-  const float initialPitch = orbitPitch;
+  Vector3 initialTarget = camera.target;
+  float initialDistance = orbitDistance;
+  float initialYaw = orbitYaw;
+  float initialPitch = orbitPitch;
 
   JSRuntime *runtime = JS_NewRuntime();
   EnsureManifoldClass(runtime);
   JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
 
   std::shared_ptr<manifold::Manifold> scene = nullptr;
+  
+#ifdef __EMSCRIPTEN__
+  // Setup global state for Emscripten exports
+  g_state.runtime = runtime;
+  g_state.scene = &scene;
+#endif
   std::string statusMessage;
   std::filesystem::path scriptPath;
   std::unordered_map<std::filesystem::path, WatchedFile> watchedFiles;
@@ -703,16 +1395,30 @@ int main() {
     }
   }
   if (!scene) {
-    manifold::Manifold cube = manifold::Manifold::Cube({2.0, 2.0, 2.0}, true);
-    manifold::Manifold sphere = manifold::Manifold::Sphere(1.2, 0);
-    manifold::Manifold combo = cube + sphere.Translate({0.0, 0.8, 0.0});
-    scene = std::make_shared<manifold::Manifold>(combo);
+    // Create empty scene (tiny invisible cube) instead of default logo
+    // This ensures the model can be created without crashing
+    manifold::Manifold emptyScene = manifold::Manifold::Cube({0.001, 0.001, 0.001}, true);
+    scene = std::make_shared<manifold::Manifold>(emptyScene);
     if (statusMessage.empty()) {
-      reportStatus("No scene.js found. Using built-in sample.");
+      reportStatus("Ready - no scene loaded.");
     }
   }
 
   Model model = CreateRaylibModelFrom(scene->GetMeshGL());
+
+#ifdef __EMSCRIPTEN__
+  // Complete global state setup
+  g_state.model = &model;
+  g_state.statusMessage = &statusMessage;
+  g_state.camera = &camera;
+  g_state.orbitYaw = &orbitYaw;
+  g_state.orbitPitch = &orbitPitch;
+  g_state.orbitDistance = &orbitDistance;
+  g_state.initialTarget = &initialTarget;
+  g_state.initialDistance = &initialDistance;
+  g_state.initialYaw = &initialYaw;
+  g_state.initialPitch = &initialPitch;
+#endif
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
 
@@ -738,6 +1444,10 @@ int main() {
   // Choose a starting thickness in your renderer units (you already scale model by kSceneScale)
   float outlineThickness = 0.02f;  // tweak to taste; ~2 cm if 1 unit == 1 m
   Color outlineColor = BLACK;
+
+  // Code panel state (DevTools-style)
+  bool codePanelVisible = true;  // Start visible
+  float codePanelHeight = 0.0f;  // Will be set to half screen when visible
 
   // Main loop function - extracted for both desktop and web
   auto mainLoop = [&]() {
@@ -906,6 +1616,8 @@ int main() {
       orbitPitch = initialPitch;
     }
 
+    // C key toggle removed - panel is now managed through HTML UI
+
     const float moveSpeed = 0.05f * orbitDistance;
     if (IsKeyDown(KEY_W)) camera.target = Vector3Add(camera.target, Vector3Scale(forward, moveSpeed));
     if (IsKeyDown(KEY_S)) camera.target = Vector3Add(camera.target, Vector3Scale(forward, -moveSpeed));
@@ -924,9 +1636,22 @@ int main() {
     BeginDrawing();
     ClearBackground(RAYWHITE);
 
+    // Adjust viewport if code panel is visible (takes bottom half)
+    const int screenWidth = GetScreenWidth();
+    const int screenHeight = GetScreenHeight();
+    codePanelHeight = codePanelVisible ? screenHeight * 0.5f : 0.0f;
+    const int viewportHeight = screenHeight - static_cast<int>(codePanelHeight);
+    
+    // Set viewport to exclude code panel area
+    if (codePanelVisible) {
+      rlViewport(0, 0, screenWidth, viewportHeight);
+    } else {
+      rlViewport(0, 0, screenWidth, screenHeight);
+    }
+
     BeginMode3D(camera);
     DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
-    DrawAxes(2.0f);
+    DrawAxes(0.3f);  // Much smaller axes so they don't dominate the view
 
     // Optional: make thickness roughly constant in screen pixels.
     // Uncomment to use 2px outlines independent of distance.
@@ -951,18 +1676,21 @@ int main() {
     DrawModel(model, {0.0f, 0.0f, 0.0f}, 1.0f, WHITE);
     EndMode3D();
 
-    const float margin = 20.0f;
-    const Vector2 textSize = MeasureTextEx(brandingFont, kBrandText, kBrandFontSize, 0.0f);
-    const Vector2 brandPos = {
-        static_cast<float>(GetScreenWidth()) - textSize.x - margin,
-        margin};
-    DrawTextEx(brandingFont, kBrandText, brandPos, kBrandFontSize, 0.0f, DARKGRAY);
+    // Reset viewport to full screen for UI drawing
+    rlViewport(0, 0, screenWidth, screenHeight);
+    
+    // Reset OpenGL state for 2D text rendering
+    rlDisableDepthTest();
+    rlSetTexture(0);
 
-    if (!statusMessage.empty()) {
-      constexpr float statusFontSize = 18.0f;
-      const Vector2 statusPos = {margin, margin};
-      DrawTextEx(brandingFont, statusMessage.c_str(), statusPos, statusFontSize, 0.0f, DARKGRAY);
-    }
+    const float margin = 20.0f;
+    constexpr float brandFontSize = 32.0f;  // Larger, more readable
+    const Vector2 textSize = MeasureTextEx(defaultFont, kBrandText, brandFontSize, 0.0f);
+    const Vector2 brandPos = {
+        static_cast<float>(screenWidth) - textSize.x - margin,
+        margin};
+    DrawTextEx(defaultFont, kBrandText, brandPos, brandFontSize, 0.0f, DARKGRAY);
+    
 
     EndDrawing();
   };
@@ -984,9 +1712,6 @@ int main() {
 
   UnloadMaterial(outlineMat);   // also releases the shader
   DestroyModel(model);
-  if (brandingFontCustom) {
-    UnloadFont(brandingFont);
-  }
   JS_FreeRuntime(runtime);
   CloseWindow();
 

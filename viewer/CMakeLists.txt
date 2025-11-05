@@ -1,5 +1,28 @@
 find_package(raylib 4.0 REQUIRED)
 
+# Generate version header
+include(FindGit)
+if(GIT_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..
+    OUTPUT_VARIABLE GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+else()
+  set(GIT_COMMIT "unknown")
+endif()
+
+string(TIMESTAMP BUILD_DATE "%Y%m%d-%H%M%S")
+set(BUILD_VERSION "${BUILD_DATE}-${GIT_COMMIT}")
+
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/version.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/version.h
+  @ONLY
+)
+
 add_library(dingcad_quickjs STATIC
   ${PROJECT_SOURCE_DIR}/vendor/quickjs/quickjs.c
   ${PROJECT_SOURCE_DIR}/vendor/quickjs/quickjs-libc.c
@@ -20,6 +43,7 @@ target_include_directories(dingcad_viewer
   PRIVATE
     ${PROJECT_SOURCE_DIR}/vendor/manifold/include
     ${PROJECT_SOURCE_DIR}/vendor/quickjs
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_link_libraries(dingcad_viewer

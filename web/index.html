@@ -3,7 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>DingCAD - Web Viewer</title>
+    <!-- Monaco Editor for code editing -->
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js" 
+            onerror="window.monacoLoadFailed = true; console.warn('Monaco Editor failed to load, will use fallback editor');"></script>
     <style>
         * {
             margin: 0;
@@ -11,11 +17,23 @@
             box-sizing: border-box;
         }
         
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: #1a1a1a;
             color: #e0e0e0;
-            overflow: hidden;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
         }
         
         #container {
@@ -23,50 +41,289 @@
             height: 100vh;
             display: flex;
             flex-direction: column;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: hidden;
         }
         
         #canvas-container {
-            flex: 1;
+            flex: 1 1 0%;
             position: relative;
             background: #0f0f0f;
+            width: 100%;
+            min-width: 0;
+            min-height: 0;
+            margin: 0;
+            padding: 0;
+            border: none;
+            box-sizing: border-box;
+            transition: all 0.3s ease;
+            overflow: hidden;
         }
         
         #canvas {
-            width: 100%;
-            height: 100%;
             display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            margin: 0;
+            padding: 0;
+            border: none;
+            outline: none;
         }
         
         #toolbar {
             background: #2a2a2a;
             padding: 10px 20px;
             display: flex;
-            align-items: center;
-            gap: 15px;
-            border-top: 1px solid #3a3a3a;
-        }
-        
-        #editor-container {
-            width: 100%;
-            height: 100%;
-            display: none;
             flex-direction: column;
+            gap: 10px;
+            border-top: 1px solid #3a3a3a;
+            flex-shrink: 0;
         }
         
-        #editor-container.active {
+        #toolbar-buttons {
             display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 15px;
+        }
+        
+        #code-editor-panel {
+            background: #1e1e1e;
+            border-top: 1px solid #3a3a3a;
+            display: flex !important;
+            flex-direction: column;
+            transition: height 0.3s ease;
+            min-height: 40px;
+            height: 40px;
+            overflow: hidden;
+            margin-left: -20px;
+            margin-right: -20px;
+            margin-bottom: -10px;
+            width: calc(100% + 40px);
+        }
+        
+        #code-editor-panel.expanded {
+            height: 400px;
+            max-height: 50vh;
+        }
+        
+        #code-editor-panel.minimized {
+            height: 40px;
+            min-height: 40px;
+        }
+        
+        @media (max-width: 768px) {
+            #code-editor-panel {
+                height: 35px;
+            }
+            
+            #code-editor-panel.expanded {
+                height: 300px;
+                max-height: 40vh;
+            }
+        }
+        
+        #code-editor-panel.hidden {
+            display: none !important;
+        }
+        
+        #editor-header {
+            background: #2a2a2a;
+            padding: 8px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            min-height: 40px;
+            flex-shrink: 0;
+        }
+        
+        #code-editor-panel.expanded #editor-header {
+            border-bottom: 1px solid #3a3a3a;
+        }
+        
+        #editor-header:hover {
+            background: #333;
+        }
+        
+        @media (max-width: 768px) {
+            #editor-header {
+                padding: 6px 12px;
+                min-height: 35px;
+            }
+        }
+        
+        #editor-header h3 {
+            margin: 0;
+            font-size: 14px;
+            color: #e0e0e0;
+            flex: 1;
+        }
+        
+        @media (max-width: 768px) {
+            #editor-header h3 {
+                font-size: 12px;
+            }
+        }
+        
+        #editor-close {
+            background: transparent;
+            border: none;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0 10px;
+            transition: transform 0.2s ease;
+        }
+        
+        #editor-close:hover {
+            color: #fff;
+        }
+        
+        #code-editor-panel.minimized #editor-close {
+            transform: rotate(180deg);
+        }
+        
+        #editor-content {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            display: none;
+        }
+        
+        #code-editor-panel.expanded #editor-content {
+            display: block;
+        }
+        
+        
+        #library-panel {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 300px;
+            height: 100vh;
+            background: #1e1e1e;
+            border-left: 1px solid #3a3a3a;
+            display: flex;
+            flex-direction: column;
+            z-index: 999;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            box-shadow: -2px 0 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        #library-panel.visible {
+            transform: translateX(0);
+        }
+        
+        #library-header {
+            background: #2a2a2a;
+            padding: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #3a3a3a;
+        }
+        
+        #library-header h3 {
+            margin: 0;
+            font-size: 16px;
+            color: #e0e0e0;
+        }
+        
+        #library-close {
+            background: transparent;
+            border: none;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0 10px;
+        }
+        
+        #library-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        
+        .library-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .library-item:hover {
+            background: #3a3a3a;
+        }
+        
+        .library-item.selected {
+            background: #1a3a2a;
+            border-color: #2a5a3a;
+        }
+        
+        .library-item.selected:hover {
+            background: #2a4a3a;
+        }
+        
+        .library-item-name {
+            font-weight: 600;
+            color: #e0e0e0;
+            margin-bottom: 4px;
+        }
+        
+        .library-item-desc {
+            font-size: 12px;
+            color: #a0a0a0;
+        }
+        
+        .library-folder-header {
+            padding: 8px 12px;
+            margin-top: 12px;
+            margin-bottom: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #3a3a3a;
+        }
+        
+        .library-folder-header:first-child {
+            margin-top: 0;
+        }
+        
+        #library-toggle {
+            font-size: 14px;
+            padding: 8px 16px;
         }
         
         #editor {
             flex: 1;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 14px;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #editor-fallback {
+            flex: 1;
+            width: 100%;
+            height: 100%;
             background: #1e1e1e;
-            color: #d4d4d4;
+            color: #e0e0e0;
             border: none;
             padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
             resize: none;
-            tab-size: 2;
+            outline: none;
         }
         
         button {
@@ -138,15 +395,134 @@
             100% { transform: rotate(360deg); }
         }
         
-        #commit-info {
+        
+        #version-history-panel {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 350px;
+            height: 100vh;
+            background: #1e1e1e;
+            border-right: 1px solid #3a3a3a;
+            display: flex;
+            flex-direction: column;
+            z-index: 998;
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        #version-history-panel.visible {
+            transform: translateX(0);
+        }
+        
+        #version-history-header {
+            background: #2a2a2a;
+            padding: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #3a3a3a;
+        }
+        
+        #version-history-header h3 {
+            margin: 0;
+            font-size: 16px;
+            color: #e0e0e0;
+        }
+        
+        #version-history-close {
+            background: transparent;
+            border: none;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0 10px;
+        }
+        
+        #version-history-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        
+        .version-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .version-item:hover {
+            background: #3a3a3a;
+        }
+        
+        .version-item.current {
+            border-color: #0066cc;
+            background: #2a3a4a;
+        }
+        
+        .version-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        
+        .version-item-time {
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .version-item-preview {
             font-size: 11px;
-            color: #666;
-            margin-left: auto;
+            color: #a0a0a0;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-height: 40px;
+            margin-top: 4px;
+        }
+        
+        .version-item-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .version-item-actions button {
+            padding: 4px 12px;
+            font-size: 12px;
+        }
+        
+        #version-history-toggle {
+            font-size: 14px;
+            padding: 8px 16px;
         }
     </style>
 </head>
 <body>
-    <div id="container">
+        <div id="container">
+        <div id="version-history-panel">
+            <div id="version-history-header">
+                <h3>Version History</h3>
+                <button id="version-history-close">×</button>
+            </div>
+            <div id="version-history-list"></div>
+        </div>
+        
+        <div id="library-panel">
+            <div id="library-header">
+                <h3>Library</h3>
+                <button id="library-close">×</button>
+            </div>
+            <div id="library-list"></div>
+        </div>
+        
         <div id="canvas-container">
             <div class="loading" id="loading">
                 <div class="spinner"></div>
@@ -155,22 +531,23 @@
             <canvas id="canvas"></canvas>
         </div>
         
-        <div id="editor-container">
-            <textarea id="editor" spellcheck="false"></textarea>
-            <div id="toolbar">
-                <button id="run-btn" class="primary">Run Code</button>
-                <button id="clear-btn">Clear</button>
-                <button id="example-btn">Load Example</button>
-                <div id="status">Ready</div>
-                <button id="close-editor-btn">Close Editor</button>
-            </div>
-        </div>
-        
         <div id="toolbar">
-            <button id="edit-btn">Edit Code</button>
-            <button id="reset-btn">Reset View</button>
-            <div id="status">Ready</div>
-            <div id="commit-info"></div>
+            <div id="toolbar-buttons">
+                <button id="edit-btn">Edit Code</button>
+                <button id="reset-btn">Reset View</button>
+                <div id="status">Ready</div>
+                <button id="library-toggle" title="Library">Library</button>
+            </div>
+            <div id="code-editor-panel" class="minimized" style="display: flex;">
+                <div id="editor-header">
+                    <h3 id="editor-title">Code Editor</h3>
+                    <button id="editor-close" title="Toggle expand/minimize">▼</button>
+                </div>
+                <div id="editor-content">
+                    <div id="editor"></div>
+                    <textarea id="editor-fallback" style="display: none;"></textarea>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -179,16 +556,17 @@
         let Module = null;
         let isInitialized = false;
         
-        // Get commit info from URL or default
-        const urlParams = new URLSearchParams(window.location.search);
-        const commitSha = urlParams.get('commit') || 'master';
-        
-        // Update commit info display
-        document.getElementById('commit-info').textContent = `Commit: ${commitSha.substring(0, 7)}`;
-        
         // Initialize Emscripten module
         async function initModule() {
             try {
+                // Log build version for tracking updates
+                const buildTimestamp = new Date().toISOString();
+                console.log('═══════════════════════════════════════');
+                console.log('🚀 DingCAD Web Viewer');
+                console.log(`📦 Build: ${buildTimestamp}`);
+                console.log(`🔄 Refresh: ${window.location.href}?t=${Date.now()}`);
+                console.log('═══════════════════════════════════════');
+                
                 // Get canvas element before module creation (needed for GLFW initialization)
                 const canvas = document.getElementById('canvas');
                 
@@ -207,18 +585,45 @@
                     );
                 }
                 
+                // Track if main has been called to prevent double initialization
+                let mainCalled = false;
+                
                 // Create module with configuration (canvas must be set before GLFW init)
                 Module = await createModule({
                     canvas: canvas,
                     onRuntimeInitialized: function() {
-                        // Runtime is ready, now call main
-                        Module.callMain();
+                        // Runtime is ready, now call main (only once)
+                        if (mainCalled) {
+                            console.log('Main already called, skipping');
+                            return;
+                        }
                         
-                        // Hide loading, show canvas
+                        // 'this' refers to the module instance in Emscripten callbacks
+                        const moduleInst = this || Module;
+                        
+                        // Main runs automatically with INVOKE_RUN=1
+                        // Just hide loading and mark as initialized
+                        mainCalled = true;
                         document.getElementById('loading').style.display = 'none';
                         isInitialized = true;
                         
+                        // Log successful initialization
+                        console.log('✅ DingCAD initialized successfully');
+                        console.log(`📅 Initialized at: ${new Date().toISOString()}`);
+                        
                         updateStatus('Ready', 'success');
+                        
+                        // Set up canvas resize handler
+                        setupCanvasResize();
+                        
+                        // Force immediate resize after module is ready
+                        setTimeout(() => {
+                            resizeCanvas();
+                        }, 100);
+                        
+                        // Check if we should auto-load the last library item
+                        moduleInitialized = true;
+                        checkAndAutoLoad();
                     },
                     print: function(text) {
                         console.log(text);
@@ -229,14 +634,40 @@
                 });
                 
                 // If runtime already initialized (synchronous case), call main immediately
-                if (Module.ready) {
-                    Module.callMain();
+                // But only if onRuntimeInitialized hasn't been called yet
+                if (Module && Module.ready && !mainCalled) {
+                    try {
+                        let callMainFn = null;
+                        if (typeof Module.callMain === 'function') {
+                            callMainFn = () => Module.callMain();
+                        } else if (typeof Module._main === 'function') {
+                            callMainFn = () => Module._main();
+                        }
+                        
+                        if (callMainFn) {
+                            mainCalled = true;
+                            callMainFn();
                     document.getElementById('loading').style.display = 'none';
                     isInitialized = true;
                     updateStatus('Ready', 'success');
+                    // Set up canvas resize handler
+                    setupCanvasResize();
+                    // Force immediate resize after module is ready
+                    setTimeout(() => {
+                        resizeCanvas();
+                    }, 100);
+                        } else {
+                            console.warn('callMain not available synchronously, waiting for onRuntimeInitialized');
+                        }
+                    } catch (err) {
+                        console.error('Error calling main (sync):', err);
+                        updateStatus('Error: ' + err.message, 'error');
+                        mainCalled = false; // Allow retry
+                    }
                 }
             } catch (error) {
-                console.error('Failed to initialize:', error);
+                console.error('❌ Failed to initialize:', error);
+                console.error(`📅 Error at: ${new Date().toISOString()}`);
                 updateStatus('Failed to load: ' + error.message, 'error');
             }
         }
@@ -247,80 +678,1388 @@
             statusEl.className = type;
         }
         
-        // Editor functionality
-        document.getElementById('edit-btn').addEventListener('click', () => {
-            document.getElementById('editor-container').classList.add('active');
-            loadDefaultScene();
-        });
+        // Canvas resize handler - ensures canvas internal resolution matches display size
+        function resizeCanvas() {
+            const canvas = document.getElementById('canvas');
+            const container = document.getElementById('canvas-container');
+            if (!canvas || !container) return;
+            
+            // Get the actual pixel dimensions of the container
+            const rect = container.getBoundingClientRect();
+            const width = Math.floor(rect.width);
+            const height = Math.floor(rect.height);
+            
+            // Only resize if dimensions actually changed
+            if (canvas.width !== width || canvas.height !== height) {
+                // Update canvas internal resolution to match display size
+                canvas.width = width;
+                canvas.height = height;
+                
+                // Ensure canvas is positioned at top-left of container
+                canvas.style.top = '0';
+                canvas.style.left = '0';
+                canvas.style.width = width + 'px';
+                canvas.style.height = height + 'px';
+                
+                // Canvas resize is handled automatically by Emscripten/raylib
+                // The canvas width/height attributes are sufficient for proper rendering
+                // Emscripten will automatically update GetScreenWidth/GetScreenHeight
+                
+                console.log(`🖼️ Canvas resized to ${width}x${height}`);
+            }
+        }
         
-        document.getElementById('close-editor-btn').addEventListener('click', () => {
-            document.getElementById('editor-container').classList.remove('active');
-        });
+        // Set up resize observer and window resize listener
+        let canvasResizeSetup = false;
+        function setupCanvasResize() {
+            if (canvasResizeSetup) return; // Already set up
+            const container = document.getElementById('canvas-container');
+            if (!container) return;
+            
+            // Initial resize
+            resizeCanvas();
+            
+            // Use ResizeObserver for better performance and accuracy
+            const resizeObserver = new ResizeObserver(() => {
+                resizeCanvas();
+            });
+            resizeObserver.observe(container);
+            
+            // Fallback to window resize for older browsers
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+            });
+            
+            canvasResizeSetup = true;
+            console.log('✅ Canvas resize handler initialized');
+        }
         
-        document.getElementById('run-btn').addEventListener('click', () => {
-            const code = document.getElementById('editor').value;
-            if (Module && Module.ccall) {
-                try {
-                    Module.ccall('loadSceneFromCode', null, ['string'], [code]);
-                    updateStatus('Scene loaded successfully', 'success');
-                } catch (error) {
-                    updateStatus('Error: ' + error.message, 'error');
+        // Monaco Editor setup with fallback
+        let editor = null;
+        let useFallbackEditor = false;
+        let codeEditorVisible = false; // Start minimized
+        let currentFileName = null;
+        let saveTimeout = null;
+        
+        // Version History System
+        const VERSION_HISTORY_KEY = 'dingcad_version_history';
+        const MAX_VERSIONS = 50; // Maximum number of versions to keep
+        let versionHistory = [];
+        let currentVersionId = null;
+        let versionHistoryPanelVisible = false;
+        let isRestoringVersion = false;
+        
+        // Load version history from localStorage
+        function loadVersionHistory() {
+            try {
+                const stored = localStorage.getItem(VERSION_HISTORY_KEY);
+                if (stored) {
+                    versionHistory = JSON.parse(stored);
+                    console.log(`📜 Loaded ${versionHistory.length} versions from history`);
+                } else {
+                    versionHistory = [];
+                }
+            } catch (e) {
+                console.warn('⚠️ Failed to load version history:', e);
+                versionHistory = [];
+            }
+        }
+        
+        // Save version history to localStorage
+        function saveVersionHistory() {
+            try {
+                localStorage.setItem(VERSION_HISTORY_KEY, JSON.stringify(versionHistory));
+            } catch (e) {
+                console.warn('⚠️ Failed to save version history:', e);
+                // If storage is full, try to remove old versions
+                if (e.name === 'QuotaExceededError') {
+                    // Keep only the most recent 25 versions
+                    versionHistory = versionHistory.slice(-25);
+                    try {
+                        localStorage.setItem(VERSION_HISTORY_KEY, JSON.stringify(versionHistory));
+                    } catch (e2) {
+                        console.error('❌ Still failed to save after cleanup:', e2);
+                    }
                 }
             }
+        }
+        
+        // Save a new version to history
+        function saveVersion(code, filename) {
+            if (isRestoringVersion) {
+                return; // Don't save when restoring
+            }
+            
+            const now = new Date();
+            const version = {
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                timestamp: now.getTime(),
+                date: now.toISOString(),
+                code: code,
+                filename: filename || currentFileName || 'Untitled',
+                preview: code.substring(0, 100).replace(/\n/g, ' ').trim()
+            };
+            
+            // Check if this is the same as the last version (avoid duplicates)
+            if (versionHistory.length > 0) {
+                const lastVersion = versionHistory[versionHistory.length - 1];
+                if (lastVersion.code === code && lastVersion.filename === version.filename) {
+                    // Same code, just update the current version ID
+                    currentVersionId = lastVersion.id;
+                    return;
+                }
+            }
+            
+            versionHistory.push(version);
+            currentVersionId = version.id;
+            
+            // Limit history size
+            if (versionHistory.length > MAX_VERSIONS) {
+                versionHistory = versionHistory.slice(-MAX_VERSIONS);
+            }
+            
+            saveVersionHistory();
+            updateVersionHistoryUI();
+            console.log(`💾 Saved version: ${version.filename} (${new Date(version.timestamp).toLocaleTimeString()})`);
+        }
+        
+        // Revert to a specific version
+        function revertToVersion(versionId) {
+            const version = versionHistory.find(v => v.id === versionId);
+            if (!version) {
+                console.error('❌ Version not found:', versionId);
+                return;
+            }
+            
+            console.log(`↩️ Reverting to version: ${version.filename} (${new Date(version.timestamp).toLocaleString()})`);
+            
+            isRestoringVersion = true;
+            if (editor) {
+                editor.setValue(version.code);
+                if (!useFallbackEditor) {
+                    // Force Monaco to update
+                    setTimeout(() => {
+                        editor.layout();
+                        const model = editor.getModel();
+                        if (model) {
+                            editor.setPosition({ lineNumber: 1, column: 1 });
+                        }
+                    }, 50);
+                }
+            }
+            
+            // Update filename if it changed
+            if (version.filename !== currentFileName) {
+                updateEditorTitle(version.filename);
+            }
+            
+            currentVersionId = versionId;
+            updateVersionHistoryUI();
+            
+            // Execute the code after a short delay
+            setTimeout(() => {
+                isRestoringVersion = false;
+                executeCode();
+            }, 100);
+        }
+        
+        // Update the version history UI
+        function updateVersionHistoryUI() {
+            const list = document.getElementById('version-history-list');
+            if (!list) return;
+            
+            list.innerHTML = '';
+            
+            if (versionHistory.length === 0) {
+                list.innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">No version history yet</div>';
+                return;
+            }
+            
+            // Show versions in reverse chronological order (newest first)
+            const sortedVersions = [...versionHistory].reverse();
+            
+            sortedVersions.forEach(version => {
+                const item = document.createElement('div');
+                item.className = 'version-item' + (version.id === currentVersionId ? ' current' : '');
+                
+                const date = new Date(version.timestamp);
+                const timeStr = date.toLocaleString();
+                const relativeTime = getRelativeTime(date);
+                
+                item.innerHTML = `
+                    <div class="version-item-header">
+                        <strong style="color: #e0e0e0;">${version.filename}</strong>
+                        <span class="version-item-time">${relativeTime}</span>
+                    </div>
+                    <div class="version-item-preview">${escapeHtml(version.preview)}${version.code.length > 100 ? '...' : ''}</div>
+                    <div class="version-item-actions">
+                        <button class="primary" onclick="window.revertToVersion('${version.id}')">Revert</button>
+                        <button onclick="window.viewVersion('${version.id}')">View</button>
+                    </div>
+                `;
+                
+                list.appendChild(item);
+            });
+        }
+        
+        // Helper function to get relative time
+        function getRelativeTime(date) {
+            const now = new Date();
+            const diffMs = now.getTime() - date.getTime();
+            const diffSecs = Math.floor(diffMs / 1000);
+            const diffMins = Math.floor(diffSecs / 60);
+            const diffHours = Math.floor(diffMins / 60);
+            const diffDays = Math.floor(diffHours / 24);
+            
+            if (diffSecs < 60) return 'just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            if (diffHours < 24) return `${diffHours}h ago`;
+            if (diffDays < 7) return `${diffDays}d ago`;
+            return date.toLocaleDateString();
+        }
+        
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Make functions available globally for onclick handlers
+        window.revertToVersion = revertToVersion;
+        window.viewVersion = function(versionId) {
+            const version = versionHistory.find(v => v.id === versionId);
+            if (!version) return;
+            
+            // Show version in a modal or alert (simple version)
+            const codePreview = version.code.substring(0, 500) + (version.code.length > 500 ? '\n...' : '');
+            alert(`Version from ${new Date(version.timestamp).toLocaleString()}\n\n${codePreview}`);
+        };
+        
+        // Toggle version history panel
+        function toggleVersionHistoryPanel() {
+            versionHistoryPanelVisible = !versionHistoryPanelVisible;
+            const panel = document.getElementById('version-history-panel');
+            if (versionHistoryPanelVisible) {
+                panel.classList.add('visible');
+                updateVersionHistoryUI();
+            } else {
+                panel.classList.remove('visible');
+            }
+        }
+        
+        // Initialize fallback editor (textarea)
+        function initFallbackEditor() {
+            console.log('Using fallback textarea editor');
+            useFallbackEditor = true;
+            const fallbackEditor = document.getElementById('editor-fallback');
+            const monacoEditor = document.getElementById('editor');
+            fallbackEditor.style.display = 'block';
+            monacoEditor.style.display = 'none';
+            fallbackEditor.value = '// Code editor - load a library item or write your own scene\n// Example:\n// export const scene = cube({ size: [1, 1, 1], center: true });';
+            
+            // Set initial title
+            updateEditorTitle(null);
+            
+            // Auto-save and execute on change (with debounce)
+            fallbackEditor.addEventListener('input', () => {
+                if (saveTimeout) clearTimeout(saveTimeout);
+                saveTimeout = setTimeout(() => {
+                    const code = fallbackEditor.value;
+                    // Only save version and execute if module is ready
+                    if (Module && isInitialized && editor) {
+                        saveVersion(code, currentFileName);
+                        executeCode();
+                    }
+                }, 1000); // 1 second debounce
+            });
+            
+            editor = {
+                getValue: () => fallbackEditor.value,
+                setValue: (value) => { fallbackEditor.value = value; },
+                layout: () => {} // No-op for fallback
+            };
+        }
+        
+        // Initialize editor (Monaco or fallback)
+        function initEditor() {
+            // Check if Monaco failed to load or if require is not available
+            if (window.monacoLoadFailed || typeof require === 'undefined') {
+                initFallbackEditor();
+            } else {
+                // Try to initialize Monaco Editor
+                try {
+                    require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } });
+                    require(['vs/editor/editor.main'], function () {
+                        editor = monaco.editor.create(document.getElementById('editor'), {
+                            value: '// Code editor - load a library item or write your own scene\n// Example:\n// export const scene = cube({ size: [1, 1, 1], center: true });',
+                            language: 'javascript',
+                            theme: 'vs-dark',
+                            fontSize: 14,
+                            minimap: { enabled: false },
+                            scrollBeyondLastLine: false,
+                            automaticLayout: true,
+                            wordWrap: 'on'
+                        });
+                        
+                        // Set initial title when editor loads with default code
+                        updateEditorTitle(null);
+                        
+                        // Auto-save and execute on change (with debounce)
+                        editor.onDidChangeModelContent(() => {
+                            if (saveTimeout) clearTimeout(saveTimeout);
+                            saveTimeout = setTimeout(() => {
+                                const code = editor.getValue();
+                                // Only save version and execute if module is ready
+                                if (Module && isInitialized) {
+                                    saveVersion(code, currentFileName);
+                                    executeCode();
+                                }
+                            }, 1000); // 1 second debounce
+                        });
+                    }, function(error) {
+                        console.error('Failed to load Monaco Editor:', error);
+                        initFallbackEditor();
+                    });
+                } catch (error) {
+                    console.error('Failed to initialize Monaco Editor:', error);
+                    initFallbackEditor();
+                }
+            }
+        }
+        
+        // Initialize editor after a short delay to allow Monaco loader to fail if needed
+        setTimeout(initEditor, 100);
+        
+        // Code editor panel toggle (minimize/expand)
+        function toggleCodeEditorPanel() {
+            const panel = document.getElementById('code-editor-panel');
+            
+            if (panel.classList.contains('minimized')) {
+                // Expand
+                panel.classList.remove('minimized');
+                panel.classList.add('expanded');
+                if (editor && !useFallbackEditor) {
+                    // Force Monaco to re-render and re-tokenize when expanded
+                    setTimeout(() => {
+                        editor.layout();
+                        // Trigger a content change to force re-tokenization
+                        const model = editor.getModel();
+                        if (model) {
+                            const value = model.getValue();
+                            model.setValue('');
+                            model.setValue(value);
+                        }
+                        editor.render();
+                    }, 100);
+                }
+            } else {
+                // Minimize
+                panel.classList.remove('expanded');
+                panel.classList.add('minimized');
+            }
+        }
+        
+        document.getElementById('editor-close').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleCodeEditorPanel();
         });
         
-        document.getElementById('clear-btn').addEventListener('click', () => {
-            document.getElementById('editor').value = '';
+        // Also allow clicking header to toggle
+        document.getElementById('editor-header').addEventListener('click', () => {
+            toggleCodeEditorPanel();
         });
         
-        document.getElementById('example-btn').addEventListener('click', () => {
-            loadExample();
+        // Function to update editor title with filename
+        function updateEditorTitle(filename) {
+            const titleElement = document.getElementById('editor-title');
+            if (filename) {
+                titleElement.textContent = filename;
+                currentFileName = filename;
+            } else {
+                titleElement.textContent = 'Code Editor';
+                currentFileName = null;
+            }
+        }
+        
+        function executeCode() {
+            if (!Module || !editor || !isInitialized) {
+                console.warn('⚠️ Cannot execute code: Module or editor not ready');
+                return;
+            }
+            
+            const code = editor.getValue();
+            if (!code || code.trim().length === 0) {
+                console.warn('⚠️ Cannot execute: empty code');
+                return;
+            }
+            
+            // Check if code is only comments (common pattern for placeholder code)
+            const codeWithoutComments = code.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+            if (codeWithoutComments.length === 0) {
+                console.warn('⚠️ Cannot execute: code contains only comments');
+                return;
+            }
+            
+            // Check if code exports a scene
+            if (!code.includes('export') && !code.includes('export const scene') && !code.includes('export { scene }')) {
+                console.warn('⚠️ Code does not appear to export a scene');
+                // Don't return - let it try anyway, might be a function that will be wrapped
+            }
+            
+            try {
+                console.log('📝 Executing code...');
+                console.log('Code preview:', code.substring(0, 200) + (code.length > 200 ? '...' : ''));
+                // Write code to virtual filesystem and load it
+                Module.FS.writeFile('/tmp/scene.js', code);
+                // Call the C++ function to load the scene
+                Module.ccall('loadSceneFromCode', null, ['string'], [code]);
+                console.log('✅ Code execution call completed');
+                
+                // Poll for status updates with detailed error reporting
+                let attempts = 0;
+                const maxAttempts = 50; // 5 seconds max wait
+                const checkStatus = () => {
+                    attempts++;
+                    try {
+                        const statusMsg = Module.ccall('getStatusMessage', 'string', [], []);
+                        console.log(`📊 Status check ${attempts}:`, statusMsg);
+                        
+                        if (statusMsg && statusMsg.includes('Error')) {
+                            console.error('❌ Scene load failed with error:', statusMsg);
+                            updateStatus(statusMsg, 'error');
+                            return;
+                        }
+                        
+                        if (statusMsg && statusMsg.includes('successfully')) {
+                            console.log('✅ Scene loaded successfully:', statusMsg);
+                            updateStatus(statusMsg, 'success');
+                            return;
+                        }
+                        
+                        // If still processing and haven't exceeded max attempts, check again
+                        if (attempts < maxAttempts) {
+                            setTimeout(checkStatus, 100);
+                        } else {
+                            // Timeout - check final status
+                            const finalStatus = Module.ccall('getStatusMessage', 'string', [], []);
+                            if (finalStatus && finalStatus.includes('Error')) {
+                                console.error('❌ Scene load failed (timeout):', finalStatus);
+                                updateStatus(finalStatus, 'error');
+                            } else {
+                                console.warn('⚠️ Status check timeout, final status:', finalStatus || 'unknown');
+                                updateStatus(finalStatus || 'Status unknown - check console for details', 'warning');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('❌ Error checking status:', error);
+                        updateStatus('Error checking status: ' + error.message, 'error');
+                    }
+                };
+                
+                // Start checking status after a short delay
+                setTimeout(checkStatus, 100);
+                } catch (error) {
+                console.error('❌ Code execution error:', error);
+                console.error('Error stack:', error.stack);
+                    updateStatus('Error: ' + error.message, 'error');
+            }
+        }
+        
+        
+        document.getElementById('edit-btn').addEventListener('click', () => {
+            const panel = document.getElementById('code-editor-panel');
+            if (panel.classList.contains('hidden')) {
+                panel.classList.remove('hidden');
+                panel.classList.add('minimized');
+            } else {
+                // Toggle expand/minimize
+                toggleCodeEditorPanel();
+            }
         });
         
         document.getElementById('reset-btn').addEventListener('click', () => {
             if (Module && Module.ccall) {
                 Module.ccall('resetCamera', null, [], []);
+                // Update URL after reset
+                setTimeout(() => {
+                    const cameraState = getCameraState();
+                    if (cameraState) {
+                        // Get currently selected items to preserve them
+                        const selectedFiles = Array.from(selectedLibraryItems)
+                            .map(fileKey => libraryFiles.find(file => getFileKey(file) === fileKey))
+                            .filter(file => file !== undefined);
+                        updateURL(selectedFiles.length > 0 ? selectedFiles : null, cameraState);
+                    }
+                }, 100);
             }
         });
         
-        function loadDefaultScene() {
-            // Load default scene.js content
-            fetch('./scene.js')
-                .then(r => r.text())
-                .then(text => {
-                    document.getElementById('editor').value = text;
+        // Library panel functionality - dynamically loaded from manifest
+        let libraryFiles = [];
+        let libraryPanelVisible = false;
+        let selectedLibraryItems = new Set(); // Track selected library items by fileKey
+        
+        // Load library manifest dynamically
+        async function loadLibraryManifest() {
+            try {
+                console.log('📚 Loading library manifest...');
+                const response = await fetch('./library-manifest.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const manifest = await response.json();
+                libraryFiles = manifest.files || [];
+                console.log(`✅ Loaded ${libraryFiles.length} library files from manifest`);
+                // Repopulate the library list with new data
+                populateLibraryList();
+            } catch (error) {
+                console.error('❌ Failed to load library manifest:', error);
+                console.warn('⚠️ Falling back to empty library list');
+                libraryFiles = [];
+                populateLibraryList();
+            }
+        }
+        
+        function toggleLibraryPanel() {
+            libraryPanelVisible = !libraryPanelVisible;
+            const panel = document.getElementById('library-panel');
+            if (libraryPanelVisible) {
+                panel.classList.add('visible');
+            } else {
+                panel.classList.remove('visible');
+            }
+        }
+        
+        // URL management functions
+        function updateURL(libraryItems = null, cameraState = null, preserveParams = true) {
+            const url = new URL(window.location);
+            
+            // If preserveParams is false, clear camera params first (only when setting library items)
+            if (!preserveParams && libraryItems !== null) {
+                url.searchParams.delete('yaw');
+                url.searchParams.delete('pitch');
+                url.searchParams.delete('distance');
+                url.searchParams.delete('tx');
+                url.searchParams.delete('ty');
+                url.searchParams.delete('tz');
+            }
+            
+            // Handle library items - use 'items' parameter for multiple, 'item' for single (backward compat)
+            url.searchParams.delete('item');
+            url.searchParams.delete('items');
+            
+            if (libraryItems !== null && libraryItems.length > 0) {
+                if (libraryItems.length === 1) {
+                    // Single item - use 'item' for backward compatibility
+                    const fileKey = libraryItems[0].path || `${libraryItems[0].folder || 'root'}/${libraryItems[0].name}`;
+                url.searchParams.set('item', fileKey);
+                } else {
+                    // Multiple items - use 'items' parameter (comma-separated)
+                    const fileKeys = libraryItems.map(item => 
+                        item.path || `${item.folder || 'root'}/${item.name}`
+                    );
+                    url.searchParams.set('items', fileKeys.join(','));
+                }
+            }
+            
+            if (cameraState !== null) {
+                if (cameraState.yaw !== undefined) url.searchParams.set('yaw', cameraState.yaw.toFixed(4));
+                if (cameraState.pitch !== undefined) url.searchParams.set('pitch', cameraState.pitch.toFixed(4));
+                if (cameraState.distance !== undefined) url.searchParams.set('distance', cameraState.distance.toFixed(4));
+                if (cameraState.target !== undefined) {
+                    url.searchParams.set('tx', cameraState.target.x.toFixed(4));
+                    url.searchParams.set('ty', cameraState.target.y.toFixed(4));
+                    url.searchParams.set('tz', cameraState.target.z.toFixed(4));
+                }
+            }
+            
+            // Update URL without page reload
+            window.history.replaceState({}, '', url);
+        }
+        
+        // Get file key for a library item
+        function getFileKey(file) {
+            return file.path || `${file.folder || 'root'}/${file.name}`;
+        }
+        
+        // Cache for camera target buffer to avoid repeated allocations
+        let cameraTargetBuffer = null;
+        
+        function getCameraState() {
+            if (!Module || !Module.ccall) return null;
+            try {
+                const yaw = Module.ccall('getCameraYaw', 'number', [], []);
+                const pitch = Module.ccall('getCameraPitch', 'number', [], []);
+                const distance = Module.ccall('getCameraDistance', 'number', [], []);
+                const target = { x: 0, y: 0, z: 0 };
+                
+                // Allocate memory for return values (3 floats) - use cached buffer if possible
+                let targetPtr = null;
+                let usedMalloc = false;
+                
+                // Try _malloc first (requires explicit freeing)
+                if (typeof Module._malloc === 'function' && typeof Module._free === 'function') {
+                    try {
+                        targetPtr = Module._malloc(12); // 3 floats * 4 bytes
+                        usedMalloc = true;
+                    } catch (e) {
+                        // Fall through to next option
+                    }
+                }
+                
+                // Try stackAlloc (doesn't require freeing, but may not be exported)
+                if (!targetPtr) {
+                    try {
+                        // Check if property exists first to avoid abort if not exported
+                        if ('stackAlloc' in Module && typeof Module.stackAlloc === 'function') {
+                            targetPtr = Module.stackAlloc(12);
+                        }
+                    } catch (e) {
+                        // stackAlloc not available or not exported, continue to next option
+                    }
+                }
+                
+                // Try allocate as fallback
+                if (!targetPtr && typeof Module.allocate === 'function') {
+                    try {
+                        targetPtr = Module.allocate(12, 'i8', Module.ALLOC_NORMAL);
+                    } catch (e) {
+                        // Fall through
+                    }
+                }
+                
+                // If no allocation method worked, return with default target values
+                if (!targetPtr) {
+                    return { yaw, pitch, distance, target };
+                }
+                
+                try {
+                    // Call with pointers as arguments
+                    Module.ccall('getCameraTarget', null, ['number', 'number', 'number'], 
+                        [targetPtr, targetPtr + 4, targetPtr + 8]);
+                    
+                    // Read values from memory - use getValue if available, otherwise HEAPF32
+                    if (typeof Module.getValue === 'function') {
+                        target.x = Module.getValue(targetPtr, 'float');
+                        target.y = Module.getValue(targetPtr + 4, 'float');
+                        target.z = Module.getValue(targetPtr + 8, 'float');
+                    } else if (Module.HEAPF32) {
+                        // Fallback to HEAPF32
+                        target.x = Module.HEAPF32[targetPtr / 4];
+                        target.y = Module.HEAPF32[(targetPtr + 4) / 4];
+                        target.z = Module.HEAPF32[(targetPtr + 8) / 4];
+                    }
+                } finally {
+                    // Free memory (only if we used malloc, not stackAlloc)
+                    if (usedMalloc && typeof Module._free === 'function') {
+                        try {
+                            Module._free(targetPtr);
+                        } catch (e) {
+                            // Ignore errors during free
+                        }
+                    } else if (typeof Module.deallocate === 'function') {
+                        try {
+                            Module.deallocate(targetPtr);
+                        } catch (e) {
+                            // Ignore errors during deallocate
+                        }
+                    }
+                    // stackAlloc doesn't need freeing
+                }
+                
+                return { yaw, pitch, distance, target };
+            } catch (e) {
+                console.warn('⚠️ Error getting camera state:', e);
+                return null;
+            }
+        }
+        
+        function setCameraState(state) {
+            if (!Module || !Module.ccall) return false;
+            try {
+                if (state.yaw !== undefined) Module.ccall('setCameraYaw', null, ['number'], [state.yaw]);
+                if (state.pitch !== undefined) Module.ccall('setCameraPitch', null, ['number'], [state.pitch]);
+                if (state.distance !== undefined) Module.ccall('setCameraDistance', null, ['number'], [state.distance]);
+                if (state.target !== undefined) {
+                    Module.ccall('setCameraTarget', null, ['number', 'number', 'number'], 
+                        [state.target.x, state.target.y, state.target.z]);
+                }
+                Module.ccall('updateCameraPosition', null, [], []);
+                return true;
+            } catch (e) {
+                console.warn('⚠️ Error setting camera state:', e);
+                return false;
+            }
+        }
+        
+        // Debounced camera update function
+        let cameraUpdateTimeout = null;
+        function updateCameraInURL() {
+            if (cameraUpdateTimeout) clearTimeout(cameraUpdateTimeout);
+            cameraUpdateTimeout = setTimeout(() => {
+                const cameraState = getCameraState();
+                if (cameraState) {
+                    updateURL(null, cameraState);
+                }
+            }, 300); // 300ms debounce
+        }
+        
+        // Toggle library item selection
+        function toggleLibraryItem(file) {
+            const fileKey = getFileKey(file);
+            if (selectedLibraryItems.has(fileKey)) {
+                selectedLibraryItems.delete(fileKey);
+            } else {
+                selectedLibraryItems.add(fileKey);
+            }
+            updateLibraryUI();
+            loadSelectedLibraryItems();
+        }
+        
+        // Load all selected library items and combine them
+        function loadSelectedLibraryItems(openPanel = false) {
+            if (selectedLibraryItems.size === 0) {
+                // No items selected - clear the scene
+                if (editor) {
+                    editor.setValue('// No library items selected\n// Select items from the library to load them');
+                    updateEditorTitle(null);
+                    if (Module && isInitialized) {
+                        executeCode();
+                    }
+                }
+                // Update URL to remove items
+                const currentCameraState = getCameraState();
+                updateURL([], currentCameraState, true);
+                return;
+            }
+            
+            // Get selected files
+            const selectedFiles = Array.from(selectedLibraryItems)
+                .map(fileKey => libraryFiles.find(file => getFileKey(file) === fileKey))
+                .filter(file => file !== undefined);
+            
+            if (selectedFiles.length === 0) {
+                console.warn('⚠️ No valid files found for selected items');
+                return;
+            }
+            
+            console.log(`📚 Loading ${selectedFiles.length} library file(s): ${selectedFiles.map(f => f.name).join(', ')}`);
+            
+            // Update URL with selected items (preserve existing camera params)
+            const currentCameraState = getCameraState();
+            updateURL(selectedFiles, currentCameraState, true);
+            
+            // Store selected items in localStorage
+            try {
+                const fileKeys = selectedFiles.map(f => getFileKey(f));
+                localStorage.setItem('dingcad_last_library_items', JSON.stringify(fileKeys));
+            } catch (e) {
+                console.warn('⚠️ Could not save to localStorage:', e);
+            }
+            
+            // Load all files in parallel
+            Promise.all(selectedFiles.map(file => 
+            fetch(file.path)
+                .then(r => {
+                    if (!r.ok) {
+                        throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+                    }
+                    return r.text();
                 })
-                .catch(() => {
-                    document.getElementById('editor').value = getDefaultSceneCode();
+                    .then(code => ({ file, code }))
+            )).then(fileData => {
+                console.log(`✅ Loaded ${fileData.length} file(s)`);
+                
+                // Process each file's code
+                const processedCodes = fileData.map(({ file, code }) => {
+                    let finalCode = code;
+                    
+                    // Check if the file exports scene directly
+                    if (code.includes('export const scene')) {
+                        console.log(`  → ${file.name} exports scene directly`);
+                        return finalCode;
+                    }
+                    
+                    // File exports functions - need to handle default export
+                    console.log(`  → ${file.name} exports functions, checking for default export...`);
+                        
+                        // Check if there's already a default export
+                        if (code.includes('export default')) {
+                        console.log(`  → ${file.name} has default export`);
+                        return finalCode;
+                    }
+                    
+                            // No default export, need to create one from named export
+                            let functionName = null;
+                            
+                            // Try to find exported function names
+                            const exportFuncMatch = code.match(/export\s+function\s+(\w+)/);
+                            if (exportFuncMatch) {
+                                functionName = exportFuncMatch[1];
+                                console.log(`  → Found named export function: ${functionName}`);
+                            }
+                            
+                            // Fallback to filename-based detection
+                            if (!functionName) {
+                                if (file.name.includes('xiao')) {
+                                    functionName = 'buildXiaoEsp32C3';
+                                } else if (file.name.includes('DTSPCB')) {
+                                    functionName = 'buildDTSPCB';
+                                } else if (file.name.includes('radio')) {
+                                    functionName = 'buildRadioEnclosure';
+                                } else if (file.name.includes('ifItFitsIsits')) {
+                                    functionName = 'ifItFitsIsitsBox';
+                                } else {
+                                    functionName = 'buildDTSPCB'; // default fallback
+                                }
+                                console.log(`  → Using filename-based function name: ${functionName}`);
+                            }
+                            
+                            // Create default export that calls the function
+                            finalCode = code + '\n\n// Auto-generated: create default export that calls the function\n' +
+                                `export default ${functionName};`;
+                            
+                    return finalCode;
+                });
+                
+                // Combine all codes into a single module
+                let combinedCode = '';
+                
+                if (processedCodes.length === 1) {
+                    // Single file - use as-is
+                    combinedCode = processedCodes[0];
+                } else {
+                    // Multiple files - combine them
+                    // We'll rename scenes to avoid conflicts and combine them at the end
+                    const sceneNames = [];
+                    
+                    processedCodes.forEach((code, index) => {
+                        const file = fileData[index].file;
+                        const sceneName = `scene${index}`;
+                        
+                        // Check if code exports a scene directly
+                        if (code.includes('export const scene')) {
+                            // Rename the scene export to avoid conflicts
+                            // Replace all occurrences of 'export const scene' with 'const sceneName'
+                            const renamedCode = code.replace(/export\s+const\s+scene\b/g, `const ${sceneName}`);
+                            combinedCode += `// ====== ${file.name} ======\n${renamedCode}\n\n`;
+                            sceneNames.push(sceneName);
+                        } else if (code.includes('export default')) {
+                            // Extract default export function name
+                            const funcMatch = code.match(/export\s+default\s+(\w+)\s*;?/);
+                            if (funcMatch) {
+                                const funcName = funcMatch[1];
+                                // Remove the export default line and call the function
+                                const modifiedCode = code.replace(/export\s+default\s+\w+\s*;?\s*/g, '');
+                                combinedCode += `// ====== ${file.name} ======\n${modifiedCode}\nconst ${sceneName} = ${funcName}();\n\n`;
+                                sceneNames.push(sceneName);
+                            } else {
+                                // Default export might be inline - try to handle it
+                                const modifiedCode = code.replace(/export\s+default\s*/, `const ${sceneName} = `);
+                                combinedCode += `// ====== ${file.name} ======\n${modifiedCode}\n\n`;
+                                sceneNames.push(sceneName);
+                            }
+                        } else {
+                            // No export found - use code as-is
+                            combinedCode += `// ====== ${file.name} ======\n${code}\n\n`;
+                            // Try to find if there's a scene variable defined
+                            const sceneMatch = code.match(/(?:const|let|var)\s+scene\s*=/);
+                            if (sceneMatch) {
+                                // There's a scene variable - rename it
+                                const renamedCode = code.replace(/(?:const|let|var)\s+scene\b/g, `const ${sceneName}`);
+                                // Replace the last occurrence in combinedCode
+                                const lastIndex = combinedCode.lastIndexOf(`// ====== ${file.name} ======`);
+                                if (lastIndex !== -1) {
+                                    const before = combinedCode.substring(0, lastIndex);
+                                    const after = combinedCode.substring(lastIndex);
+                                    combinedCode = before + after.replace(code, renamedCode);
+                                }
+                                sceneNames.push(sceneName);
+                            } else {
+                                // Assume the code creates a scene somehow - use a fallback
+                                sceneNames.push(sceneName);
+                            }
+                        }
+                    });
+                    
+                    // Combine all scenes using union (built-in function)
+                    if (sceneNames.length > 0) {
+                        combinedCode += `\n// ====== Combined Scene ======\n`;
+                        if (sceneNames.length === 1) {
+                            combinedCode += `export const scene = ${sceneNames[0]};\n`;
+                        } else {
+                            // Use union to combine multiple scenes
+                            combinedCode += `export const scene = union(${sceneNames.join(', ')});\n`;
+                        }
+                    } else {
+                        // Fallback: just export the first scene if no scenes found
+                        combinedCode += `\nexport const scene = scene0;\n`;
+        }
+                    }
+        
+                    if (editor) {
+                    editor.setValue(combinedCode);
+                    console.log('  → Combined code loaded into editor');
+                    }
+                
+                // Update editor title
+                const title = selectedFiles.length === 1 
+                    ? selectedFiles[0].name 
+                    : `${selectedFiles.length} items selected`;
+                updateEditorTitle(title);
+                
+                // Save initial version
+                    if (editor) {
+                        const code = editor.getValue();
+                    saveVersion(code, title);
+                    }
+                
+                // Ensure editor panel is visible
+                    const panel = document.getElementById('code-editor-panel');
+                    panel.classList.remove('hidden');
+                    if (!panel.classList.contains('expanded')) {
+                        panel.classList.remove('expanded');
+                        panel.classList.add('minimized');
+                    }
+                
+                    if (editor && !useFallbackEditor) {
+                        setTimeout(() => {
+                            editor.layout();
+                            const model = editor.getModel();
+                            if (model) {
+                                const value = model.getValue();
+                                model.setValue('');
+                                model.setValue(value);
+                            }
+                            editor.render();
+                        }, 100);
+                    }
+                
+                // Execute code
+                    setTimeout(() => {
+                        if (!Module || !isInitialized) {
+                            console.warn('⚠️ Module not ready yet, waiting...');
+                            let attempts = 0;
+                            const checkReady = setInterval(() => {
+                                attempts++;
+                                if (Module && isInitialized) {
+                                    clearInterval(checkReady);
+                                    executeCode();
+                            } else if (attempts > 20) {
+                                    clearInterval(checkReady);
+                                    updateStatus('Error: Module initialization timeout', 'error');
+                                    console.error('❌ Module failed to initialize after timeout');
+                                }
+                            }, 100);
+                        } else {
+                            executeCode();
+                        }
+                    }, 50);
+                
+                // Only open library panel if requested
+                    if (openPanel) {
+                        toggleLibraryPanel();
+                    }
+            }).catch(err => {
+                const errorMsg = `Error loading library files: ${err.message}`;
+                    console.error('❌ Library load error:', err);
+                    updateStatus(errorMsg, 'error');
                 });
         }
         
-        function loadExample() {
-            document.getElementById('editor').value = getExampleCode();
+        // Legacy function for single file loading (backward compatibility)
+        function loadLibraryFile(file, openPanel = true) {
+            const fileKey = getFileKey(file);
+            // Clear all selections and select only this file
+            selectedLibraryItems.clear();
+            selectedLibraryItems.add(fileKey);
+            updateLibraryUI();
+            loadSelectedLibraryItems(openPanel);
         }
         
-        function getDefaultSceneCode() {
-            return `// DingCAD Scene
-// Export a 'scene' variable with your 3D model
-
-const cube = cube({size: [10, 10, 10]});
-const sphere = sphere({radius: 5});
-
-scene = cube + sphere;
-`;
+        // Update library UI to reflect selected items
+        function updateLibraryUI() {
+            // Update selected state in the library list
+            const items = document.querySelectorAll('.library-item');
+            items.forEach(item => {
+                const fileKey = item.dataset.fileKey;
+                if (fileKey) {
+                    if (selectedLibraryItems.has(fileKey)) {
+                        item.classList.add('selected');
+                    } else {
+                        item.classList.remove('selected');
+                    }
+                }
+            });
         }
         
-        function getExampleCode() {
-            return `// Example: Creating a simple mechanical part
-const base = cube({size: [20, 5, 20]});
-const hole = cylinder({radius: 3, height: 10}).translate([10, 0, 10]);
-
-scene = base - hole;
-`;
+        function populateLibraryList() {
+            const list = document.getElementById('library-list');
+            if (!list) {
+                console.error('❌ Library list element not found');
+                return;
+            }
+            
+            list.innerHTML = '';
+            
+            if (!libraryFiles || libraryFiles.length === 0) {
+                list.innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">No library files found</div>';
+                console.warn('⚠️ No library files to display');
+                return;
+            }
+            
+            console.log(`📚 Populating library list with ${libraryFiles.length} files`);
+            
+            // Group files by folder
+            const grouped = {};
+            libraryFiles.forEach(file => {
+                const folder = file.folder || 'root';
+                if (!grouped[folder]) {
+                    grouped[folder] = [];
+                }
+                grouped[folder].push(file);
+            });
+            
+            // Sort folders (root first, then alphabetically)
+            const folders = Object.keys(grouped).sort((a, b) => {
+                if (a === 'root') return -1;
+                if (b === 'root') return 1;
+                return a.localeCompare(b);
+            });
+            
+            // Render grouped files
+            folders.forEach(folder => {
+                const files = grouped[folder];
+                
+                // Add folder header if not root
+                if (folder !== 'root') {
+                    const folderHeader = document.createElement('div');
+                    folderHeader.className = 'library-folder-header';
+                    folderHeader.textContent = folder + '/';
+                    list.appendChild(folderHeader);
+                }
+                
+                // Add files in this folder
+                files.forEach(file => {
+                    const fileKey = getFileKey(file);
+                    const item = document.createElement('div');
+                    item.className = 'library-item';
+                    item.dataset.fileKey = fileKey;
+                    
+                    const isSelected = selectedLibraryItems.has(fileKey);
+                    
+                    item.innerHTML = `
+                        <div style="flex: 1;">
+                        <div class="library-item-name">${file.name}</div>
+                        <div class="library-item-desc">${file.desc || 'No description'}</div>
+                        </div>
+                    `;
+                    
+                    // Handle item click (toggle selection)
+                    item.addEventListener('click', () => {
+                        toggleLibraryItem(file);
+                    });
+                    
+                    if (isSelected) {
+                        item.classList.add('selected');
+                    }
+                    
+                    list.appendChild(item);
+                });
+            });
+            
+            console.log(`✅ Library list populated with ${folders.length} folders`);
+        }
+        
+        document.getElementById('library-toggle').addEventListener('click', toggleLibraryPanel);
+        document.getElementById('library-close').addEventListener('click', toggleLibraryPanel);
+        
+        // Version history panel controls (hidden from toolbar, but still accessible via close button)
+        document.getElementById('version-history-close').addEventListener('click', toggleVersionHistoryPanel);
+        
+        // Load version history on startup
+        loadVersionHistory();
+        
+        // Function to parse URL and restore state
+        function parseURLAndRestoreState() {
+            const urlParams = new URLSearchParams(window.location.search);
+            
+            // Parse camera state from URL
+            const yaw = urlParams.get('yaw');
+            const pitch = urlParams.get('pitch');
+            const distance = urlParams.get('distance');
+            const tx = urlParams.get('tx');
+            const ty = urlParams.get('ty');
+            const tz = urlParams.get('tz');
+            
+            if (yaw !== null || pitch !== null || distance !== null || tx !== null || ty !== null || tz !== null) {
+                const cameraState = {};
+                if (yaw !== null) cameraState.yaw = parseFloat(yaw);
+                if (pitch !== null) cameraState.pitch = parseFloat(pitch);
+                if (distance !== null) cameraState.distance = parseFloat(distance);
+                if (tx !== null || ty !== null || tz !== null) {
+                    cameraState.target = {
+                        x: tx !== null ? parseFloat(tx) : 0,
+                        y: ty !== null ? parseFloat(ty) : 0,
+                        z: tz !== null ? parseFloat(tz) : 0
+                    };
+                }
+                
+                // Restore camera state after module is ready
+                if (Module && isInitialized) {
+                    setCameraState(cameraState);
+                    console.log('✅ Restored camera state from URL:', cameraState);
+                } else {
+                    // Wait for module to be ready
+                    const checkReady = setInterval(() => {
+                        if (Module && isInitialized) {
+                            clearInterval(checkReady);
+                            setCameraState(cameraState);
+                            console.log('✅ Restored camera state from URL:', cameraState);
+                        }
+                    }, 100);
+                    // Timeout after 5 seconds
+                    setTimeout(() => clearInterval(checkReady), 5000);
+                }
+            }
+            
+            // Parse library items from URL (support both 'item' and 'items' parameters)
+            const itemKey = urlParams.get('item');
+            const itemsKey = urlParams.get('items');
+            
+            let itemsToLoad = [];
+            
+            if (itemsKey && libraryFiles && libraryFiles.length > 0) {
+                // Multiple items - comma-separated
+                const itemKeys = itemsKey.split(',').map(k => k.trim()).filter(k => k);
+                itemsToLoad = itemKeys
+                    .map(key => findMatchingLibraryFile(key, libraryFiles))
+                    .filter(file => file !== null && file !== undefined);
+            } else if (itemKey && libraryFiles && libraryFiles.length > 0) {
+                // Single item (backward compatibility)
+                const matchingFile = findMatchingLibraryFile(itemKey, libraryFiles);
+                if (matchingFile) {
+                    itemsToLoad = [matchingFile];
+                }
+            }
+            
+            if (itemsToLoad.length > 0) {
+                console.log(`✅ Found ${itemsToLoad.length} library item(s) in URL: ${itemsToLoad.map(f => f.name).join(', ')}, loading...`);
+                
+                // Set selected items
+                selectedLibraryItems.clear();
+                itemsToLoad.forEach(file => {
+                    selectedLibraryItems.add(getFileKey(file));
+                });
+                updateLibraryUI();
+                
+                // Load them after module is ready (don't open library panel when loading from URL)
+                const loadItems = () => {
+                    loadSelectedLibraryItems(false);
+                };
+                
+                    if (Module && isInitialized) {
+                    setTimeout(loadItems, 500);
+                    } else {
+                        const checkReady = setInterval(() => {
+                            if (Module && isInitialized) {
+                                clearInterval(checkReady);
+                            setTimeout(loadItems, 500);
+                            }
+                        }, 100);
+                        setTimeout(() => clearInterval(checkReady), 5000);
+                    }
+                return true; // URL items take precedence
+            }
+            
+            return false; // No URL items, fall back to localStorage
+        }
+        
+        // Helper function to normalize and match file paths
+        function findMatchingLibraryFile(searchKey, libraryFiles) {
+            if (!searchKey || !libraryFiles || libraryFiles.length === 0) return null;
+            
+            // Decode and normalize the search key
+            const decodedKey = decodeURIComponent(searchKey);
+            const normalizedKey = decodedKey.replace(/^\.\//, '').replace(/^\/+/, '');
+            
+            return libraryFiles.find(file => {
+                const fileKey = file.path || `${file.folder || 'root'}/${file.name}`;
+                const normalizedFileKey = fileKey.replace(/^\.\//, '').replace(/^\/+/, '');
+                
+                // Try multiple matching strategies
+                return normalizedFileKey === normalizedKey ||
+                       fileKey === decodedKey ||
+                       file.path === decodedKey ||
+                       file.path === normalizedKey ||
+                       file.name === decodedKey ||
+                       file.name === normalizedKey.split('/').pop() ||
+                       `${file.folder || 'root'}/${file.name}` === normalizedKey ||
+                       `${file.folder || 'root'}/${file.name}` === decodedKey;
+            });
+        }
+        
+        // Function to auto-load the last library item(s)
+        function autoLoadLastLibraryItem() {
+            // Check URL first, if it has items, use that instead
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('item') || urlParams.get('items')) {
+                console.log('ℹ️ URL has item(s) parameter, skipping localStorage auto-load');
+                return false;
+            }
+            
+            if (!Module || !isInitialized || !libraryFiles || libraryFiles.length === 0) {
+                console.log('⏳ Waiting for module and library to be ready...');
+                return false;
+            }
+            
+            try {
+                // Try to load multiple items first (new format)
+                const lastItemsJson = localStorage.getItem('dingcad_last_library_items');
+                if (lastItemsJson) {
+                    try {
+                        const lastItemKeys = JSON.parse(lastItemsJson);
+                        if (Array.isArray(lastItemKeys) && lastItemKeys.length > 0) {
+                            console.log(`🔍 Looking for saved library items: ${lastItemKeys.join(', ')}`);
+                            
+                            const matchingFiles = lastItemKeys
+                                .map(key => findMatchingLibraryFile(key, libraryFiles))
+                                .filter(file => file !== null && file !== undefined);
+                            
+                            if (matchingFiles.length > 0) {
+                                console.log(`✅ Found ${matchingFiles.length} saved library item(s), auto-loading...`);
+                                
+                                // Set selected items
+                                selectedLibraryItems.clear();
+                                matchingFiles.forEach(file => {
+                                    selectedLibraryItems.add(getFileKey(file));
+                                });
+                                updateLibraryUI();
+                                
+                                // Load them after a short delay
+                                setTimeout(() => {
+                                    loadSelectedLibraryItems();
+                                }, 500);
+                                return true;
+                            } else {
+                                console.log(`⚠️ Saved library items not found in manifest`);
+                                localStorage.removeItem('dingcad_last_library_items');
+                }
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ Error parsing saved library items:', e);
+                        localStorage.removeItem('dingcad_last_library_items');
+                    }
+                }
+                
+                // Fall back to single item (backward compatibility)
+                const lastItemKey = localStorage.getItem('dingcad_last_library_item');
+                if (lastItemKey) {
+                console.log(`🔍 Looking for saved library item: ${lastItemKey}`);
+                
+                const matchingFile = findMatchingLibraryFile(lastItemKey, libraryFiles);
+                
+                if (matchingFile) {
+                    console.log(`✅ Found saved library item: ${matchingFile.name}, auto-loading...`);
+                        
+                        // Set selected item
+                        selectedLibraryItems.clear();
+                        selectedLibraryItems.add(getFileKey(matchingFile));
+                        updateLibraryUI();
+                        
+                        // Load it after a short delay
+                    setTimeout(() => {
+                            loadSelectedLibraryItems();
+                    }, 500);
+                    return true;
+                } else {
+                    console.log(`⚠️ Saved library item not found in manifest: ${lastItemKey}`);
+                    localStorage.removeItem('dingcad_last_library_item');
+                    return false;
+                }
+                }
+                
+                console.log('ℹ️ No saved library items found');
+                return false;
+            } catch (e) {
+                console.warn('⚠️ Error auto-loading last library items:', e);
+                return false;
+            }
         }
         
         // Initialize on page load
+        let moduleInitialized = false;
+        let manifestLoaded = false;
+        
+        function checkAndAutoLoad() {
+            if (moduleInitialized && manifestLoaded) {
+                // Both are ready, try to parse URL and restore state
+                setTimeout(() => {
+                    const urlRestored = parseURLAndRestoreState();
+                    // If URL didn't have an item, fall back to localStorage
+                    if (!urlRestored) {
+                        autoLoadLastLibraryItem();
+                    }
+                }, 500);
+            }
+        }
+        
+        // Track camera changes and update URL
+        let lastCameraState = null;
+        function trackCameraChanges() {
+            if (!Module || !isInitialized) return;
+            
+            const currentState = getCameraState();
+            if (!currentState) return;
+            
+            // Check if camera state changed significantly
+            if (lastCameraState) {
+                const threshold = 0.001; // Small threshold to avoid constant updates
+                const changed = 
+                    Math.abs(currentState.yaw - lastCameraState.yaw) > threshold ||
+                    Math.abs(currentState.pitch - lastCameraState.pitch) > threshold ||
+                    Math.abs(currentState.distance - lastCameraState.distance) > threshold ||
+                    Math.abs(currentState.target.x - lastCameraState.target.x) > threshold ||
+                    Math.abs(currentState.target.y - lastCameraState.target.y) > threshold ||
+                    Math.abs(currentState.target.z - lastCameraState.target.z) > threshold;
+                
+                if (changed) {
+                    updateCameraInURL();
+                }
+            }
+            
+            lastCameraState = currentState;
+        }
+        
+        // Start tracking camera changes after module is initialized
+        function startCameraTracking() {
+            if (Module && isInitialized) {
+                // Poll camera state periodically
+                setInterval(trackCameraChanges, 100); // Check every 100ms
+            } else {
+                setTimeout(startCameraTracking, 100);
+            }
+        }
+        
+        loadLibraryManifest().then(() => {
+            console.log('✅ Library manifest loaded');
+            manifestLoaded = true;
+            checkAndAutoLoad();
+        });
         initModule();
+        
+        // Set up canvas resize handler immediately (before module loads)
+        // This ensures initial sizing is correct
+        setupCanvasResize();
+        
+        // Force an immediate resize on page load
+        setTimeout(() => {
+            resizeCanvas();
+        }, 0);
+        
+        // Start camera tracking after a delay to ensure module is ready
+        setTimeout(startCameraTracking, 1000);
     </script>
 </body>
 </html>

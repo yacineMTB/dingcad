@@ -21,7 +21,12 @@ endif()
 # Set emscripten flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s USE_GLFW=3 -s FULL_ES3=1 -s USE_WEBGL2=1")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=2GB")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','MEMFS']")
+# Increase stack size to 2MB (default is 16KB in Emscripten 3.x, which is too small for QuickJS)
+# QuickJS itself uses 2MB stack size to prevent stack overflow during parsing
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s STACK_SIZE=2097152")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','MEMFS','addRunDependency','removeRunDependency','stackAlloc','getValue']")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s EXPORTED_FUNCTIONS=['_loadSceneFromCode','_getStatusMessage','_logBuildVersion','_main']")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s INVOKE_RUN=1")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s MODULARIZE=1 -s EXPORT_NAME='createDingCADModule' -s EXPORT_ES6=1")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s FORCE_FILESYSTEM=1 -s ASSERTIONS=1")
 
@@ -36,6 +41,29 @@ set(MANIFOLD_EXPORT OFF CACHE BOOL "" FORCE)
 
 # Get the repository root (one level up from web directory)
 get_filename_component(REPO_ROOT "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
+
+# Generate version header (after REPO_ROOT is defined)
+include(FindGit)
+if(GIT_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+    WORKING_DIRECTORY ${REPO_ROOT}
+    OUTPUT_VARIABLE GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+else()
+  set(GIT_COMMIT "unknown")
+endif()
+
+string(TIMESTAMP BUILD_DATE "%Y%m%d-%H%M%S")
+set(BUILD_VERSION "${BUILD_DATE}-${GIT_COMMIT}")
+
+configure_file(
+  ${REPO_ROOT}/viewer/version.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/version.h
+  @ONLY
+)
 
 # Add manifold subdirectory (specify binary dir for out-of-tree source)
 add_subdirectory(${REPO_ROOT}/vendor/manifold ${CMAKE_BINARY_DIR}/vendor/manifold EXCLUDE_FROM_ALL)
@@ -122,6 +150,7 @@ target_include_directories(dingcad_viewer_web
     ${REPO_ROOT}/vendor/manifold/include
     ${REPO_ROOT}/vendor/quickjs
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 # Add Raylib include directory if found

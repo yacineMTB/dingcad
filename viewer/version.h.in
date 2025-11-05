@@ -1,0 +1,6 @@
+// Auto-generated version header - do not edit manually
+#pragma once
+#define BUILD_VERSION "@BUILD_VERSION@"
+#define BUILD_DATE "@BUILD_DATE@"
+#define BUILD_COMMIT "@BUILD_COMMIT@"
+

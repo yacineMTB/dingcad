@@ -90,6 +90,12 @@ jobs:
             -DRAYLIB_SRC_DIR=${{ env.RAYLIB_SRC_DIR }}
           emmake make -j$(nproc) VERBOSE=1
       
+      - name: Generate library manifest
+        run: |
+          chmod +x _/scripts/generate-library-manifest.sh
+          _/scripts/generate-library-manifest.sh
+          echo "✓ Library manifest generated"
+      
       - name: Prepare web assets
         run: |
           mkdir -p web-dist
@@ -97,15 +103,40 @@ jobs:
           cp build-web/dingcad_viewer.wasm web-dist/
           cp build-web/dingcad_viewer.wasm.map web-dist/ || true
           cp web/index.html web-dist/
+          cp web/simple.html web-dist/ || true
           cp scene.js web-dist/ || echo "// Default scene\nconst cube = cube({size: [10, 10, 10]});\nscene = cube;" > web-dist/scene.js
+          
+          # Copy library files and manifest
+          if [ -d "library" ]; then
+            cp -r library web-dist/library
+            echo "✓ Copied library folder"
+          else
+            echo "⚠ Warning: library folder not found"
+          fi
+          
+          if [ -f "_/config/library-manifest.json" ]; then
+            cp _/config/library-manifest.json web-dist/library-manifest.json
+            echo "✓ Copied library-manifest.json"
+          else
+            echo "⚠ Warning: library-manifest.json not found"
+          fi
           
           # Create commit-specific version
           COMMIT_SHA=$(git rev-parse HEAD)
           COMMIT_SHORT=$(git rev-parse --short HEAD)
           mkdir -p web-dist/commits/${COMMIT_SHORT}
-          cp web-dist/*.{js,wasm,html} web-dist/commits/${COMMIT_SHORT}/ 2>/dev/null || true
           
-          # Create index with commit info
+          # Copy files to commit-specific directory (before overwriting index.html)
+          cp web-dist/*.{js,wasm} web-dist/commits/${COMMIT_SHORT}/ 2>/dev/null || true
+          cp web-dist/index.html web-dist/commits/${COMMIT_SHORT}/ 2>/dev/null || true
+          cp web-dist/simple.html web-dist/commits/${COMMIT_SHORT}/ 2>/dev/null || true
+          cp web-dist/scene.js web-dist/commits/${COMMIT_SHORT}/ 2>/dev/null || true
+          cp web-dist/library-manifest.json web-dist/commits/${COMMIT_SHORT}/ 2>/dev/null || true
+          if [ -d "web-dist/library" ]; then
+            cp -r web-dist/library web-dist/commits/${COMMIT_SHORT}/library 2>/dev/null || true
+          fi
+          
+          # Create redirect index.html in root (after copying original to commit directory)
           cat > web-dist/index.html <<EOF
           <!DOCTYPE html>
           <html>
