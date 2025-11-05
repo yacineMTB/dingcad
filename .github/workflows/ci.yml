@@ -33,7 +33,8 @@ jobs:
             libxcursor-dev \
             libgl1-mesa-dev \
             libglu1-mesa-dev \
-            libtbb-dev
+            libtbb-dev \
+            libassimp-dev
 
       - name: Build raylib
         run: |
