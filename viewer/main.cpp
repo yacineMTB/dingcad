@@ -26,6 +26,7 @@
 #include <system_error>
 #include <unordered_map>
 #include <vector>
+#include <utility>
 
 extern "C" {
 #include "quickjs.h"
@@ -96,6 +97,153 @@ void main()
     // Keep only back-faces for a clean silhouette.
     if (gl_FrontFacing) discard;
     finalColor = outlineColor;
+}
+)glsl";
+
+// Toon (cel) shading — lit 3D pass
+const char* kToonVS = R"glsl(
+#version 330
+in vec3 vertexPosition;
+in vec3 vertexNormal;
+uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 matView;
+out vec3 vNvs;
+out vec3 vVdir; // view dir in view space
+void main() {
+    vec4 wpos = matModel * vec4(vertexPosition, 1.0);
+    vec3 nvs  = mat3(matView) * mat3(matModel) * vertexNormal;
+    vNvs      = normalize(nvs);
+    vec3 vpos = (matView * wpos).xyz;
+    vVdir     = normalize(-vpos);
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
+}
+)glsl";
+
+const char* kToonFS = R"glsl(
+#version 330
+in vec3 vNvs;
+in vec3 vVdir;
+out vec4 finalColor;
+
+uniform vec3 lightDirVS;     // normalized, in view space
+uniform vec4 baseColor;      // your kBaseColor normalized [0..1]
+uniform int  toonSteps;      // e.g. 3 or 4
+uniform float ambient;       // e.g. 0.3
+uniform float diffuseWeight; // e.g. 0.7
+uniform float rimWeight;     // e.g. 0.25
+uniform float specWeight;    // e.g. 0.15
+uniform float specShininess; // e.g. 32.0
+
+float quantize(float x, int steps){
+    float s = max(1, steps-1);
+    return floor(clamp(x,0.0,1.0)*s + 1e-4)/s;
+}
+
+void main() {
+    vec3 n   = normalize(vNvs);
+    vec3 l   = normalize(lightDirVS);
+    vec3 v   = normalize(vVdir);
+
+    float ndl = max(0.0, dot(n,l));
+    float cel = quantize(ndl, toonSteps);
+
+    // crisp rim
+    float rim = pow(1.0 - max(0.0, dot(n, v)), 1.5);
+
+    // hard-edged spec
+    float spec = pow(max(0.0, dot(reflect(-l, n), v)), specShininess);
+    spec = step(0.5, spec) * specWeight;
+
+    float shade = clamp(ambient + diffuseWeight*cel + rimWeight*rim + spec, 0.0, 1.0);
+    finalColor  = vec4(baseColor.rgb * shade, 1.0);
+}
+)glsl";
+
+// Normal+Depth G-buffer — for screen-space edges
+const char* kNormalDepthVS = R"glsl(
+#version 330
+in vec3 vertexPosition;
+in vec3 vertexNormal;
+uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 matView;
+out vec3 nVS;
+out float depthLin;
+void main() {
+    vec4 wpos = matModel * vec4(vertexPosition, 1.0);
+    vec3 vpos = (matView * wpos).xyz;
+    nVS = normalize(mat3(matView) * mat3(matModel) * vertexNormal);
+    depthLin = -vpos.z; // linear view-space depth
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
+}
+)glsl";
+
+const char* kNormalDepthFS = R"glsl(
+#version 330
+in vec3 nVS;
+in float depthLin;
+out vec4 outColor;
+uniform float zNear;
+uniform float zFar;
+void main() {
+    float d = clamp((depthLin - zNear) / (zFar - zNear), 0.0, 1.0);
+    outColor = vec4(nVS*0.5 + 0.5, d); // RGB: normal, A: linear depth
+}
+)glsl";
+
+// Fullscreen composite — ink from normal/depth discontinuities
+const char* kEdgeQuadVS = R"glsl(
+#version 330
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+uniform mat4 mvp;
+out vec2 uv;
+void main() {
+    uv = vertexTexCoord;
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
+}
+)glsl";
+
+const char* kEdgeFS = R"glsl(
+#version 330
+in vec2 uv;
+out vec4 finalColor;
+
+uniform sampler2D texture0;      // color from toon pass
+uniform sampler2D normDepthTex;  // RG: normal, A: depth from ND pass
+uniform vec2 texel;              // 1/width, 1/height
+
+uniform float normalThreshold;   // e.g. 0.25
+uniform float depthThreshold;    // e.g. 0.002
+uniform float edgeIntensity;     // e.g. 1.0
+uniform vec4 inkColor;           // usually black
+
+vec3 decodeN(vec3 c){ return normalize(c*2.0 - 1.0); }
+
+void main(){
+    vec4 col = texture(texture0, uv);
+    vec4 nd  = texture(normDepthTex, uv);
+    vec3 n   = decodeN(nd.rgb);
+    float d  = nd.a;
+
+    const vec2 offs[8] = vec2[](vec2(-1,-1), vec2(0,-1), vec2(1,-1),
+                                vec2(-1, 0),              vec2(1, 0),
+                                vec2(-1, 1), vec2(0, 1), vec2(1, 1));
+    float maxNDiff = 0.0;
+    float maxDDiff = 0.0;
+    for (int i=0;i<8;i++){
+        vec4 ndn = texture(normDepthTex, uv + offs[i]*texel);
+        maxNDiff = max(maxNDiff, length(n - decodeN(ndn.rgb)));
+        maxDDiff = max(maxDDiff, abs(d - ndn.a));
+    }
+
+    float eN = smoothstep(normalThreshold, normalThreshold*2.5, maxNDiff);
+    float eD = smoothstep(depthThreshold,  depthThreshold*6.0,  maxDDiff);
+    float edge = clamp(max(eN, eD)*edgeIntensity, 0.0, 1.0);
+
+    vec3 inked = mix(col.rgb, inkColor.rgb, edge);
+    finalColor = vec4(inked, col.a);
 }
 )glsl";
 
@@ -1421,16 +1569,27 @@ int main() {
 #endif
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
+  Shader toonShader = LoadShaderFromMemory(kToonVS, kToonFS);
+  Shader normalDepthShader = LoadShaderFromMemory(kNormalDepthVS, kNormalDepthFS);
+  Shader edgeShader = LoadShaderFromMemory(kEdgeQuadVS, kEdgeFS);
 
-  // Cache uniform locations
+  if (outlineShader.id == 0 || toonShader.id == 0 || normalDepthShader.id == 0 || edgeShader.id == 0) {
+    TraceLog(LOG_ERROR, "Failed to load one or more shaders.");
+    DestroyModel(model);
+    if (brandingFontCustom) {
+      UnloadFont(brandingFont);
+    }
+    JS_FreeRuntime(runtime);
+    CloseWindow();
+    return 1;
+  }
+
+  // Outline uniforms/material
   const int locOutline = GetShaderLocation(outlineShader, "outline");
   const int locOutlineColor = GetShaderLocation(outlineShader, "outlineColor");
-
-  // A dedicated material that uses the outline shader
   Material outlineMat = LoadMaterialDefault();
   outlineMat.shader = outlineShader;
 
-  // Helper to set outline uniforms each frame
   auto setOutlineUniforms = [&](float worldThickness, Color color) {
     float c[4] = {
         color.r / 255.0f,
@@ -1441,9 +1600,86 @@ int main() {
     SetShaderValue(outlineMat.shader, locOutlineColor, c, SHADER_UNIFORM_VEC4);
   };
 
-  // Choose a starting thickness in your renderer units (you already scale model by kSceneScale)
-  float outlineThickness = 0.02f;  // tweak to taste; ~2 cm if 1 unit == 1 m
-  Color outlineColor = BLACK;
+  // Toon shader uniforms/material
+  const int locLightDirVS = GetShaderLocation(toonShader, "lightDirVS");
+  const int locBaseColor = GetShaderLocation(toonShader, "baseColor");
+  const int locToonSteps = GetShaderLocation(toonShader, "toonSteps");
+  const int locAmbient = GetShaderLocation(toonShader, "ambient");
+  const int locDiffuseWeight = GetShaderLocation(toonShader, "diffuseWeight");
+  const int locRimWeight = GetShaderLocation(toonShader, "rimWeight");
+  const int locSpecWeight = GetShaderLocation(toonShader, "specWeight");
+  const int locSpecShininess = GetShaderLocation(toonShader, "specShininess");
+  Material toonMat = LoadMaterialDefault();
+  toonMat.shader = toonShader;
+
+  // Normal/depth shader uniforms/material
+  const int locNear = GetShaderLocation(normalDepthShader, "zNear");
+  const int locFar = GetShaderLocation(normalDepthShader, "zFar");
+  Material normalDepthMat = LoadMaterialDefault();
+  normalDepthMat.shader = normalDepthShader;
+
+  // Edge composite uniforms
+  const int locNormDepthTexture = GetShaderLocation(edgeShader, "normDepthTex");
+  const int locTexel = GetShaderLocation(edgeShader, "texel");
+  const int locNormalThreshold = GetShaderLocation(edgeShader, "normalThreshold");
+  const int locDepthThreshold = GetShaderLocation(edgeShader, "depthThreshold");
+  const int locEdgeIntensity = GetShaderLocation(edgeShader, "edgeIntensity");
+  const int locInkColor = GetShaderLocation(edgeShader, "inkColor");
+
+  // Static toon lighting configuration
+  const Vector3 lightDirWS = Vector3Normalize({0.45f, 0.85f, 0.35f});
+  const float baseCol[4] = {
+      kBaseColor.r / 255.0f,
+      kBaseColor.g / 255.0f,
+      kBaseColor.b / 255.0f,
+      1.0f};
+  SetShaderValue(toonShader, locBaseColor, baseCol, SHADER_UNIFORM_VEC4);
+  int toonSteps = 4;
+  SetShaderValue(toonShader, locToonSteps, &toonSteps, SHADER_UNIFORM_INT);
+  float ambient = 0.35f;
+  SetShaderValue(toonShader, locAmbient, &ambient, SHADER_UNIFORM_FLOAT);
+  float diffuseWeight = 0.75f;
+  SetShaderValue(toonShader, locDiffuseWeight, &diffuseWeight, SHADER_UNIFORM_FLOAT);
+  float rimWeight = 0.25f;
+  SetShaderValue(toonShader, locRimWeight, &rimWeight, SHADER_UNIFORM_FLOAT);
+  float specWeight = 0.12f;
+  SetShaderValue(toonShader, locSpecWeight, &specWeight, SHADER_UNIFORM_FLOAT);
+  float specShininess = 32.0f;
+  SetShaderValue(toonShader, locSpecShininess, &specShininess, SHADER_UNIFORM_FLOAT);
+
+  float normalThreshold = 0.25f;
+  float depthThreshold = 0.002f;
+  float edgeIntensity = 1.0f;
+  SetShaderValue(edgeShader, locNormalThreshold, &normalThreshold, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(edgeShader, locDepthThreshold, &depthThreshold, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(edgeShader, locEdgeIntensity, &edgeIntensity, SHADER_UNIFORM_FLOAT);
+  const Color outlineColor = BLACK;
+  const float inkColor[4] = {
+      outlineColor.r / 255.0f,
+      outlineColor.g / 255.0f,
+      outlineColor.b / 255.0f,
+      1.0f};
+  SetShaderValue(edgeShader, locInkColor, inkColor, SHADER_UNIFORM_VEC4);
+
+  auto makeRenderTargets = [&]() {
+    const int width = std::max(GetScreenWidth(), 1);
+    const int height = std::max(GetScreenHeight(), 1);
+    RenderTexture2D color = LoadRenderTexture(width, height);
+    RenderTexture2D normDepth = LoadRenderTexture(width, height);
+    return std::make_pair(color, normDepth);
+  };
+
+  auto [rtColor, rtNormalDepth] = makeRenderTargets();
+  SetShaderValueTexture(edgeShader, locNormDepthTexture, rtNormalDepth.texture);
+  const float initialTexel[2] = {
+      1.0f / static_cast<float>(rtNormalDepth.texture.width),
+      1.0f / static_cast<float>(rtNormalDepth.texture.height)};
+  SetShaderValue(edgeShader, locTexel, initialTexel, SHADER_UNIFORM_VEC2);
+
+  int prevScreenWidth = GetScreenWidth();
+  int prevScreenHeight = GetScreenHeight();
+  const float zNear = 0.01f;
+  const float zFar = 1000.0f;
 
   // Code panel state (DevTools-style)
   bool codePanelVisible = true;  // Start visible
@@ -1633,12 +1869,24 @@ int main() {
     camera.position = Vector3Add(camera.target, offsets);
     camera.up = worldUp;
 
-    BeginDrawing();
-    ClearBackground(RAYWHITE);
+    const int screenWidth = std::max(GetScreenWidth(), 1);
+    const int screenHeight = std::max(GetScreenHeight(), 1);
+    if (screenWidth != prevScreenWidth || screenHeight != prevScreenHeight) {
+      UnloadRenderTexture(rtColor);
+      UnloadRenderTexture(rtNormalDepth);
+      auto resizedTargets = makeRenderTargets();
+      rtColor = resizedTargets.first;
+      rtNormalDepth = resizedTargets.second;
+      SetShaderValueTexture(edgeShader, locNormDepthTexture, rtNormalDepth.texture);
+      const float texel[2] = {
+          1.0f / static_cast<float>(rtNormalDepth.texture.width),
+          1.0f / static_cast<float>(rtNormalDepth.texture.height)};
+      SetShaderValue(edgeShader, locTexel, texel, SHADER_UNIFORM_VEC2);
+      prevScreenWidth = screenWidth;
+      prevScreenHeight = screenHeight;
+    }
 
     // Adjust viewport if code panel is visible (takes bottom half)
-    const int screenWidth = GetScreenWidth();
-    const int screenHeight = GetScreenHeight();
     codePanelHeight = codePanelVisible ? screenHeight * 0.5f : 0.0f;
     const int viewportHeight = screenHeight - static_cast<int>(codePanelHeight);
     
@@ -1649,32 +1897,69 @@ int main() {
       rlViewport(0, 0, screenWidth, screenHeight);
     }
 
+    Matrix view = GetCameraMatrix(camera);
+    Vector3 lightDirVS = {
+        view.m0 * lightDirWS.x + view.m4 * lightDirWS.y + view.m8 * lightDirWS.z,
+        view.m1 * lightDirWS.x + view.m5 * lightDirWS.y + view.m9 * lightDirWS.z,
+        view.m2 * lightDirWS.x + view.m6 * lightDirWS.y + view.m10 * lightDirWS.z};
+    lightDirVS = Vector3Normalize(lightDirVS);
+    SetShaderValue(toonShader, locLightDirVS, &lightDirVS.x, SHADER_UNIFORM_VEC3);
+
+    float outlineThickness = 0.0f;
+    {
+      const float pixels = 2.0f;
+      const float distance = Vector3Distance(camera.position, camera.target);
+      const float screenHeightF = static_cast<float>(screenHeight);
+      const float worldPerPixel = (screenHeightF > 0.0f)
+                                      ? 2.0f * tanf(DEG2RAD * camera.fovy * 0.5f) * distance / screenHeightF
+                                      : 0.0f;
+      outlineThickness = pixels * worldPerPixel;
+    }
+    setOutlineUniforms(outlineThickness, outlineColor);
+
+    SetShaderValue(normalDepthShader, locNear, &zNear, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(normalDepthShader, locFar, &zFar, SHADER_UNIFORM_FLOAT);
+
+    BeginTextureMode(rtColor);
+    ClearBackground(RAYWHITE);
     BeginMode3D(camera);
     DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
     DrawAxes(0.3f);  // Much smaller axes so they don't dominate the view
 
-    // Optional: make thickness roughly constant in screen pixels.
-    // Uncomment to use 2px outlines independent of distance.
-    // {
-    //   const float pixels = 2.0f;
-    //   const float distance = Vector3Distance(camera.position, camera.target);
-    //   const float worldPerPixel =
-    //       2.0f * tanf(DEG2RAD * camera.fovy * 0.5f) * distance / static_cast<float>(GetScreenHeight());
-    //   outlineThickness = pixels * worldPerPixel;
-    // }
-
-    setOutlineUniforms(outlineThickness, outlineColor);
-
-    // Draw expanded back-faces first for the silhouette
     rlDisableBackfaceCulling();
     for (int i = 0; i < model.meshCount; ++i) {
       DrawMesh(model.meshes[i], outlineMat, model.transform);
     }
     rlEnableBackfaceCulling();
 
-    // Draw your shaded model normally on top
-    DrawModel(model, {0.0f, 0.0f, 0.0f}, 1.0f, WHITE);
+    for (int i = 0; i < model.meshCount; ++i) {
+      DrawMesh(model.meshes[i], toonMat, model.transform);
+    }
     EndMode3D();
+    EndTextureMode();
+
+    BeginTextureMode(rtNormalDepth);
+    ClearBackground({127, 127, 255, 0});
+    BeginMode3D(camera);
+    for (int i = 0; i < model.meshCount; ++i) {
+      DrawMesh(model.meshes[i], normalDepthMat, model.transform);
+    }
+    EndMode3D();
+    EndTextureMode();
+
+    BeginDrawing();
+    ClearBackground(RAYWHITE);
+
+    const float texel[2] = {
+        1.0f / static_cast<float>(rtNormalDepth.texture.width),
+        1.0f / static_cast<float>(rtNormalDepth.texture.height)};
+    SetShaderValue(edgeShader, locTexel, texel, SHADER_UNIFORM_VEC2);
+
+    BeginShaderMode(edgeShader);
+    const Rectangle srcRect = {0.0f, 0.0f, static_cast<float>(rtColor.texture.width),
+                               -static_cast<float>(rtColor.texture.height)};
+    DrawTextureRec(rtColor.texture, srcRect, {0.0f, 0.0f}, WHITE);
+    EndShaderMode();
 
     // Reset viewport to full screen for UI drawing
     rlViewport(0, 0, screenWidth, screenHeight);
@@ -1710,7 +1995,12 @@ int main() {
     mainLoop();
   }
 
+  UnloadRenderTexture(rtColor);
+  UnloadRenderTexture(rtNormalDepth);
+  UnloadMaterial(toonMat);
+  UnloadMaterial(normalDepthMat);
   UnloadMaterial(outlineMat);   // also releases the shader
+  UnloadShader(edgeShader);
   DestroyModel(model);
   JS_FreeRuntime(runtime);
   CloseWindow();
