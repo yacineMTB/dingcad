@@ -44,5 +44,8 @@ jobs:
       - name: Configure project
         run: cmake -S . -B build -G Ninja
 
-      - name: Build viewer
-        run: cmake --build build --target dingcad_viewer
+      - name: Build targets
+        run: cmake --build build
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
