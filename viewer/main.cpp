@@ -129,6 +129,46 @@ void main() {
 }
 )glsl";
 
+const char* kMatcapVS = R"glsl(
+#version 330
+
+in vec3 vertexPosition;
+in vec3 vertexNormal;
+
+uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 matView;
+
+out vec3 vNormalVS;
+
+void main()
+{
+    mat3 normalMatrix = mat3(matView) * mat3(matModel);
+    vNormalVS = normalize(normalMatrix * vertexNormal);
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
+}
+)glsl";
+
+const char* kMatcapFS = R"glsl(
+#version 330
+
+in vec3 vNormalVS;
+out vec4 finalColor;
+
+uniform sampler2D texture0;
+uniform vec4 fallbackColor;
+
+void main()
+{
+    vec3 n = normalize(vNormalVS);
+    vec2 uv = n.xy * 0.5 + 0.5;
+    vec2 uvClamped = clamp(uv, vec2(0.0), vec2(1.0));
+    vec4 matcap = texture(texture0, uvClamped);
+    vec4 color = mix(fallbackColor, matcap, matcap.a);
+    finalColor = vec4(color.rgb, 1.0);
+}
+)glsl";
+
 // Normal+Depth G-buffer — for screen-space edges
 const char* kNormalDepthVS = R"glsl(
 #version 330
@@ -221,6 +261,156 @@ struct Vec3f {
   float y;
   float z;
 };
+
+struct MatcapEntry {
+  Texture2D texture{};
+  std::string name;
+  std::filesystem::path path;
+};
+
+constexpr int kMatcapMenuMaxColumns = 4;
+constexpr float kMatcapTileSize = 64.0f;
+constexpr float kMatcapTileLabelHeight = 18.0f;
+constexpr float kMatcapMenuPadding = 10.0f;
+constexpr float kMatcapMenuHeaderHeight = 32.0f;
+constexpr float kMatcapMenuButtonGap = 8.0f;
+constexpr float kMatcapButtonWidth = 120.0f;
+constexpr float kMatcapButtonHeight = 36.0f;
+
+void UnloadMatcaps(std::vector<MatcapEntry> &matcaps) {
+  for (auto &entry : matcaps) {
+    if (entry.texture.id != 0) {
+      UnloadTexture(entry.texture);
+      entry.texture = Texture2D{};
+    }
+  }
+}
+
+Rectangle ComputeMatcapPopupRect(size_t itemCount,
+                                 const Rectangle &buttonRect,
+                                 int screenWidth,
+                                 int screenHeight) {
+  Rectangle popup{0.0f, 0.0f, 0.0f, 0.0f};
+  if (itemCount == 0) {
+    return popup;
+  }
+
+  const int columns = std::max(1, std::min(kMatcapMenuMaxColumns,
+                                           static_cast<int>(itemCount)));
+  const int rows = (static_cast<int>(itemCount) + columns - 1) / columns;
+  const float cellHeight = kMatcapTileSize + kMatcapTileLabelHeight;
+  const float width = columns * kMatcapTileSize + (columns + 1) * kMatcapMenuPadding;
+  const float height = kMatcapMenuHeaderHeight +
+                       rows * cellHeight + (rows + 1) * kMatcapMenuPadding;
+
+  popup.width = width;
+  popup.height = height;
+  popup.x = buttonRect.x + buttonRect.width - width;
+  popup.y = buttonRect.y + buttonRect.height + kMatcapMenuButtonGap;
+
+  if (popup.x < kMatcapMenuPadding) {
+    popup.x = kMatcapMenuPadding;
+  }
+  if (popup.y + popup.height > static_cast<float>(screenHeight) - kMatcapMenuPadding) {
+    popup.y = std::max(kMatcapMenuPadding,
+                       static_cast<float>(screenHeight) - popup.height - kMatcapMenuPadding);
+  }
+
+  return popup;
+}
+
+int MatcapIndexAtPosition(const Vector2 &point,
+                          const Rectangle &popupRect,
+                          size_t itemCount) {
+  if (itemCount == 0) return -1;
+  if (!CheckCollisionPointRec(point, popupRect)) return -1;
+
+  float localX = point.x - popupRect.x - kMatcapMenuPadding;
+  float localY = point.y - popupRect.y - kMatcapMenuPadding;
+  if (localX < 0.0f || localY < kMatcapMenuHeaderHeight) {
+    return -1;
+  }
+  localY -= kMatcapMenuHeaderHeight;
+  if (localY < 0.0f) {
+    return -1;
+  }
+
+  const int columns = std::max(1, std::min(kMatcapMenuMaxColumns,
+                                           static_cast<int>(itemCount)));
+  const float cellHeight = kMatcapTileSize + kMatcapTileLabelHeight;
+  const float strideX = kMatcapTileSize + kMatcapMenuPadding;
+  const float strideY = cellHeight + kMatcapMenuPadding;
+
+  const int column = static_cast<int>(localX / strideX);
+  const int row = static_cast<int>(localY / strideY);
+  if (column < 0 || column >= columns || row < 0) {
+    return -1;
+  }
+
+  const float withinX = localX - column * strideX;
+  const float withinY = localY - row * strideY;
+  if (withinX > kMatcapTileSize || withinY > cellHeight) {
+    return -1;
+  }
+
+  const int index = row * columns + column;
+  if (index >= static_cast<int>(itemCount)) {
+    return -1;
+  }
+  return index;
+}
+
+std::vector<MatcapEntry> LoadMatcapsFromDir(const std::filesystem::path &directory) {
+  std::vector<MatcapEntry> result;
+  std::error_code ec;
+  if (!std::filesystem::exists(directory, ec) ||
+      !std::filesystem::is_directory(directory, ec)) {
+    TraceLog(LOG_INFO, "Matcap directory not found: %s",
+             directory.string().c_str());
+    return result;
+  }
+
+  for (const auto &entry : std::filesystem::directory_iterator(directory, ec)) {
+    if (ec) {
+      TraceLog(LOG_WARNING, "Error iterating matcap directory: %s",
+               ec.message().c_str());
+      break;
+    }
+    if (!entry.is_regular_file(ec) || ec) {
+      ec.clear();
+      continue;
+    }
+
+    std::string ext = entry.path().extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" &&
+        ext != ".bmp" && ext != ".tga") {
+      continue;
+    }
+
+    Texture2D texture = LoadTexture(entry.path().string().c_str());
+    if (texture.id == 0) {
+      TraceLog(LOG_WARNING, "Failed to load matcap texture: %s",
+               entry.path().string().c_str());
+      continue;
+    }
+    SetTextureFilter(texture, TEXTURE_FILTER_BILINEAR);
+
+    MatcapEntry matcap;
+    matcap.texture = texture;
+    matcap.name = entry.path().stem().string();
+    matcap.path = entry.path();
+    result.push_back(std::move(matcap));
+  }
+
+  std::sort(result.begin(), result.end(),
+            [](const MatcapEntry &a, const MatcapEntry &b) {
+              return a.name < b.name;
+            });
+
+  return result;
+}
 
 struct ModuleLoaderData {
   std::filesystem::path baseDir;
@@ -728,6 +918,16 @@ int main() {
   InitWindow(1280, 720, "dingcad");
   SetTargetFPS(60);
 
+  const std::filesystem::path matcapDirectory =
+      std::filesystem::current_path() / "viewer/assets/matcaps";
+  auto matcaps = LoadMatcapsFromDir(matcapDirectory);
+  int currentMatcap = -1;
+  bool showMatcapPopup = false;
+  if (!matcaps.empty()) {
+    TraceLog(LOG_INFO, "Loaded %zu matcap(s) from %s", matcaps.size(),
+             matcapDirectory.string().c_str());
+  }
+
   Font brandingFont = GetFontDefault();
   bool brandingFontCustom = false;
   const std::filesystem::path consolasPath("/System/Library/Fonts/Supplemental/Consolas.ttf");
@@ -806,10 +1006,12 @@ int main() {
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
   Shader toonShader = LoadShaderFromMemory(kToonVS, kToonFS);
+  Shader matcapShader = LoadShaderFromMemory(kMatcapVS, kMatcapFS);
   Shader normalDepthShader = LoadShaderFromMemory(kNormalDepthVS, kNormalDepthFS);
   Shader edgeShader = LoadShaderFromMemory(kEdgeQuadVS, kEdgeFS);
 
-  if (outlineShader.id == 0 || toonShader.id == 0 || normalDepthShader.id == 0 || edgeShader.id == 0) {
+  if (outlineShader.id == 0 || toonShader.id == 0 || matcapShader.id == 0 ||
+      normalDepthShader.id == 0 || edgeShader.id == 0) {
     TraceLog(LOG_ERROR, "Failed to load one or more shaders.");
     DestroyModel(model);
     if (brandingFontCustom) {
@@ -848,6 +1050,12 @@ int main() {
   Material toonMat = LoadMaterialDefault();
   toonMat.shader = toonShader;
 
+  const int locMatcapFallbackColor = GetShaderLocation(matcapShader, "fallbackColor");
+  Material matcapMat = LoadMaterialDefault();
+  matcapMat.shader = matcapShader;
+  matcapMat.maps[MATERIAL_MAP_DIFFUSE].texture = Texture2D{};
+  matcapMat.maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+
   // Normal/depth shader uniforms/material
   const int locNear = GetShaderLocation(normalDepthShader, "zNear");
   const int locFar = GetShaderLocation(normalDepthShader, "zFar");
@@ -870,6 +1078,12 @@ int main() {
       kBaseColor.b / 255.0f,
       1.0f};
   SetShaderValue(toonShader, locBaseColor, baseCol, SHADER_UNIFORM_VEC4);
+  const float matcapFallback[4] = {
+      kBaseColor.r / 255.0f,
+      kBaseColor.g / 255.0f,
+      kBaseColor.b / 255.0f,
+      1.0f};
+  SetShaderValue(matcapShader, locMatcapFallbackColor, matcapFallback, SHADER_UNIFORM_VEC4);
   int toonSteps = 4;
   SetShaderValue(toonShader, locToonSteps, &toonSteps, SHADER_UNIFORM_INT);
   float ambient = 0.35f;
@@ -919,6 +1133,48 @@ int main() {
 
   while (!WindowShouldClose()) {
     const Vector2 mouseDelta = GetMouseDelta();
+    const Vector2 mousePos = GetMousePosition();
+    const int screenWidth = std::max(GetScreenWidth(), 1);
+    const int screenHeight = std::max(GetScreenHeight(), 1);
+
+    const float uiMargin = 20.0f;
+    const Vector2 brandingSize = MeasureTextEx(brandingFont, kBrandText, kBrandFontSize, 0.0f);
+    Rectangle matcapButtonRect = {
+        static_cast<float>(screenWidth) - uiMargin - kMatcapButtonWidth,
+        uiMargin + brandingSize.y + 12.0f,
+        kMatcapButtonWidth,
+        kMatcapButtonHeight};
+
+    size_t matcapItemCount = matcaps.empty() ? 0 : matcaps.size() + 1;
+    Rectangle matcapPopupRect = {0.0f, 0.0f, 0.0f, 0.0f};
+    if (showMatcapPopup && matcapItemCount > 0) {
+      matcapPopupRect = ComputeMatcapPopupRect(matcapItemCount, matcapButtonRect,
+                                               screenWidth, screenHeight);
+    }
+
+    const bool matcapButtonHovered = !matcaps.empty() &&
+                                     CheckCollisionPointRec(mousePos, matcapButtonRect);
+    const bool matcapPopupHovered = showMatcapPopup && matcapItemCount > 0 &&
+                                    CheckCollisionPointRec(mousePos, matcapPopupRect);
+    bool matcapUiBlockingMouse = !matcaps.empty() &&
+                                 (matcapButtonHovered || (showMatcapPopup && matcapPopupHovered));
+
+    if (matcaps.empty()) {
+      showMatcapPopup = false;
+    } else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+      if (matcapButtonHovered) {
+        showMatcapPopup = !showMatcapPopup;
+      } else if (showMatcapPopup && matcapPopupHovered) {
+        const int hitIndex = MatcapIndexAtPosition(mousePos, matcapPopupRect, matcapItemCount);
+        if (hitIndex >= 0) {
+          const int desired = (hitIndex == 0) ? -1 : static_cast<int>(hitIndex - 1);
+          currentMatcap = desired;
+          showMatcapPopup = false;
+        }
+      } else if (showMatcapPopup) {
+        showMatcapPopup = false;
+      }
+    }
 
     auto reloadScene = [&]() {
       auto load = LoadSceneFromFile(runtime, scriptPath);
@@ -1021,7 +1277,7 @@ int main() {
       }
     }
 
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+    if (!matcapUiBlockingMouse && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
       orbitYaw -= mouseDelta.x * 0.01f;
       orbitPitch += mouseDelta.y * 0.01f;
       const float limit = DEG2RAD * 89.0f;
@@ -1039,7 +1295,7 @@ int main() {
     const Vector3 right = Vector3Normalize(Vector3CrossProduct(worldUp, forward));
     const Vector3 camUp = Vector3CrossProduct(forward, right);
 
-    if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+    if (!matcapUiBlockingMouse && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
       camera.target = Vector3Add(camera.target,
                                  Vector3Scale(right, mouseDelta.x * 0.01f * orbitDistance));
       camera.target = Vector3Add(camera.target,
@@ -1068,8 +1324,6 @@ int main() {
     camera.position = Vector3Add(camera.target, offsets);
     camera.up = worldUp;
 
-    const int screenWidth = std::max(GetScreenWidth(), 1);
-    const int screenHeight = std::max(GetScreenHeight(), 1);
     if (screenWidth != prevScreenWidth || screenHeight != prevScreenHeight) {
       UnloadRenderTexture(rtColor);
       UnloadRenderTexture(rtNormalDepth);
@@ -1108,6 +1362,13 @@ int main() {
     SetShaderValue(normalDepthShader, locNear, &zNear, SHADER_UNIFORM_FLOAT);
     SetShaderValue(normalDepthShader, locFar, &zFar, SHADER_UNIFORM_FLOAT);
 
+    Material *shadedMaterial = &toonMat;
+    if (currentMatcap >= 0 && currentMatcap < static_cast<int>(matcaps.size())) {
+      matcapMat.maps[MATERIAL_MAP_DIFFUSE].texture = matcaps[currentMatcap].texture;
+      matcapMat.maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+      shadedMaterial = &matcapMat;
+    }
+
     BeginTextureMode(rtColor);
     ClearBackground(RAYWHITE);
     BeginMode3D(camera);
@@ -1121,7 +1382,7 @@ int main() {
     rlEnableBackfaceCulling();
 
     for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], toonMat, model.transform);
+      DrawMesh(model.meshes[i], *shadedMaterial, model.transform);
     }
     EndMode3D();
     EndTextureMode();
@@ -1149,6 +1410,113 @@ int main() {
     DrawTextureRec(rtColor.texture, srcRect, {0.0f, 0.0f}, WHITE);
     EndShaderMode();
 
+    if (!matcaps.empty()) {
+      Color buttonFill = matcapButtonHovered ? Fade(LIGHTGRAY, 0.6f) : Fade(LIGHTGRAY, 0.35f);
+      Color buttonOutline = Fade(DARKGRAY, matcapButtonHovered ? 0.6f : 0.4f);
+      DrawRectangleRounded(matcapButtonRect, 0.3f, 8, buttonFill);
+      DrawRectangleRoundedLinesEx(matcapButtonRect, 0.3f, 8, 1.0f, buttonOutline);
+
+      Rectangle previewRect = {
+          matcapButtonRect.x + 6.0f,
+          matcapButtonRect.y + 4.0f,
+          matcapButtonRect.height - 8.0f,
+          matcapButtonRect.height - 8.0f};
+
+      if (currentMatcap >= 0 && currentMatcap < static_cast<int>(matcaps.size())) {
+        const MatcapEntry &preview = matcaps[static_cast<size_t>(currentMatcap)];
+        Rectangle src = {0.0f, 0.0f,
+                         static_cast<float>(preview.texture.width),
+                         static_cast<float>(preview.texture.height)};
+        Rectangle dst = previewRect;
+        Vector2 origin = {0.0f, 0.0f};
+        DrawTexturePro(preview.texture, src, dst, origin, 0.0f, WHITE);
+      } else {
+        DrawRectangleRounded(previewRect, 0.5f, 8, Fade(DARKGRAY, 0.25f));
+        DrawRectangleRoundedLinesEx(previewRect, 0.5f, 8, 1.0f, Fade(DARKGRAY, 0.45f));
+        Vector2 lineStart = {previewRect.x + 5.0f, previewRect.y + previewRect.height / 2.0f};
+        Vector2 lineEnd = {previewRect.x + previewRect.width - 5.0f,
+                           previewRect.y + previewRect.height / 2.0f};
+        DrawLineEx(lineStart, lineEnd, 2.0f, Fade(DARKGRAY, 0.45f));
+      }
+
+      const char *buttonLabel = showMatcapPopup ? "Matcap ^" : "Matcap v";
+      const float buttonFontSize = 18.0f;
+      Vector2 labelSize = MeasureTextEx(brandingFont, buttonLabel, buttonFontSize, 0.0f);
+      Vector2 labelPos = {
+          previewRect.x + previewRect.width + 8.0f,
+          matcapButtonRect.y + (matcapButtonRect.height - labelSize.y) * 0.5f};
+      DrawTextEx(brandingFont, buttonLabel, labelPos, buttonFontSize, 0.0f, DARKGRAY);
+
+      if (showMatcapPopup && matcapItemCount > 0) {
+        Color popupBg = Fade(RAYWHITE, 0.97f);
+        Color popupOutline = Fade(DARKGRAY, 0.35f);
+        DrawRectangleRounded(matcapPopupRect, 0.1f, 6, popupBg);
+        DrawRectangleRoundedLinesEx(matcapPopupRect, 0.1f, 6, 1.0f, popupOutline);
+
+        const char *popupTitle = "Matcaps";
+        const float popupTitleSize = 20.0f;
+        Vector2 titlePos = {
+            matcapPopupRect.x + kMatcapMenuPadding,
+            matcapPopupRect.y + 6.0f};
+        DrawTextEx(brandingFont, popupTitle, titlePos, popupTitleSize, 0.0f, DARKGRAY);
+
+        const int columns = std::max(1, std::min(kMatcapMenuMaxColumns,
+                                                 static_cast<int>(matcapItemCount)));
+        const float cellHeight = kMatcapTileSize + kMatcapTileLabelHeight;
+        const int hoveredIndex = MatcapIndexAtPosition(mousePos, matcapPopupRect, matcapItemCount);
+        const float labelFontSize = 16.0f;
+
+        for (size_t idx = 0; idx < matcapItemCount; ++idx) {
+          const int row = static_cast<int>(idx) / columns;
+          const int col = static_cast<int>(idx) % columns;
+          const float cellX = matcapPopupRect.x + kMatcapMenuPadding +
+                              col * (kMatcapTileSize + kMatcapMenuPadding);
+          const float cellY = matcapPopupRect.y + kMatcapMenuPadding +
+                              kMatcapMenuHeaderHeight +
+                              row * (cellHeight + kMatcapMenuPadding);
+
+          Rectangle imageRect = {cellX, cellY, kMatcapTileSize, kMatcapTileSize};
+          Rectangle labelRect = {cellX, cellY + kMatcapTileSize, kMatcapTileSize, kMatcapTileLabelHeight};
+
+          const bool selected = (idx == 0 && currentMatcap < 0) ||
+                                (idx > 0 && currentMatcap == static_cast<int>(idx - 1));
+          const bool hovered = hoveredIndex == static_cast<int>(idx);
+          Color tileColor = selected ? Fade(SKYBLUE, 0.35f) : Fade(LIGHTGRAY, 0.25f);
+          if (hovered) tileColor = Fade(SKYBLUE, 0.45f);
+
+          DrawRectangleRounded(imageRect, 0.2f, 6, tileColor);
+          DrawRectangleRoundedLinesEx(imageRect, 0.2f, 6, 1.0f, Fade(DARKGRAY, 0.25f));
+
+          std::string label = (idx == 0) ? "None" : matcaps[idx - 1].name;
+          if (label.size() > 18) {
+            label = label.substr(0, 15) + "...";
+          }
+
+          if (idx == 0) {
+            Vector2 noneSize = MeasureTextEx(brandingFont, "None", labelFontSize, 0.0f);
+            Vector2 nonePos = {
+                imageRect.x + (imageRect.width - noneSize.x) * 0.5f,
+                imageRect.y + (imageRect.height - noneSize.y) * 0.5f};
+            DrawTextEx(brandingFont, "None", nonePos, labelFontSize, 0.0f, DARKGRAY);
+          } else {
+            const MatcapEntry &entry = matcaps[idx - 1];
+            Rectangle src = {0.0f, 0.0f,
+                             static_cast<float>(entry.texture.width),
+                             static_cast<float>(entry.texture.height)};
+            Rectangle dst = imageRect;
+            Vector2 origin = {0.0f, 0.0f};
+            DrawTexturePro(entry.texture, src, dst, origin, 0.0f, WHITE);
+          }
+
+          Vector2 labelSizeSmall = MeasureTextEx(brandingFont, label.c_str(), labelFontSize, 0.0f);
+          Vector2 labelPosSmall = {
+              labelRect.x + (labelRect.width - labelSizeSmall.x) * 0.5f,
+              labelRect.y + (labelRect.height - labelSizeSmall.y) * 0.5f};
+          DrawTextEx(brandingFont, label.c_str(), labelPosSmall, labelFontSize, 0.0f, DARKGRAY);
+        }
+      }
+    }
+
     const float margin = 20.0f;
     const Vector2 textSize = MeasureTextEx(brandingFont, kBrandText, kBrandFontSize, 0.0f);
     const Vector2 brandPos = {
@@ -1167,10 +1535,13 @@ int main() {
 
   UnloadRenderTexture(rtColor);
   UnloadRenderTexture(rtNormalDepth);
+  matcapMat.maps[MATERIAL_MAP_DIFFUSE].texture = Texture2D{};
+  UnloadMaterial(matcapMat);
   UnloadMaterial(toonMat);
   UnloadMaterial(normalDepthMat);
   UnloadMaterial(outlineMat);   // also releases the shader
   UnloadShader(edgeShader);
+  UnloadMatcaps(matcaps);
   DestroyModel(model);
   if (brandingFontCustom) {
     UnloadFont(brandingFont);
