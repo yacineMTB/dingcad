@@ -162,6 +162,7 @@ void main()
 {
     vec3 n = normalize(vNormalVS);
     vec2 uv = n.xy * 0.5 + 0.5;
+    uv.y = 1.0 - uv.y;
     vec2 uvClamped = clamp(uv, vec2(0.0), vec2(1.0));
     vec4 matcap = texture(texture0, uvClamped);
     vec4 color = mix(fallbackColor, matcap, matcap.a);
