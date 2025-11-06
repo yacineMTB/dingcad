@@ -1299,6 +1299,8 @@ int main() {
     const Vector2 mousePos = GetMousePosition();
     const int screenWidth = std::max(GetScreenWidth(), 1);
     const int screenHeight = std::max(GetScreenHeight(), 1);
+    const float wheelMove = GetMouseWheelMove();
+    bool wheelCapturedByUI = false;
 
     const float uiMargin = 20.0f;
     const Vector2 brandingSize = MeasureTextEx(brandingFont, kBrandText, kBrandFontSize, 0.0f);
@@ -1355,14 +1357,12 @@ int main() {
           matcapScrollOffset = 0.0f;
         }
       }
-      if (showMatcapPopup) {
-        const float wheel = GetMouseWheelMove();
-        if (wheel != 0.0f) {
-          matcapScrollOffset = Clamp(matcapScrollOffset - wheel * 20.0f,
-                                     0.0f, matcapScrollMax);
-          if (matcapPopupHovered) {
-            uiBlockingMouse = true;
-          }
+      if (showMatcapPopup && wheelMove != 0.0f) {
+        matcapScrollOffset = Clamp(matcapScrollOffset - wheelMove * 20.0f,
+                                   0.0f, matcapScrollMax);
+        if (matcapPopupHovered) {
+          uiBlockingMouse = true;
+          wheelCapturedByUI = true;
         }
       }
     }
@@ -1507,9 +1507,8 @@ int main() {
       orbitPitch = Clamp(orbitPitch, -limit, limit);
     }
 
-    const float wheel = GetMouseWheelMove();
-    if (wheel != 0.0f) {
-      orbitDistance *= (1.0f - wheel * 0.1f);
+    if (!wheelCapturedByUI && wheelMove != 0.0f) {
+      orbitDistance *= (1.0f - wheelMove * 0.1f);
       orbitDistance = Clamp(orbitDistance, 1.0f, 50.0f);
     }
 
