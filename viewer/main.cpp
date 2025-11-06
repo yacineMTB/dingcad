@@ -269,6 +269,16 @@ struct MatcapEntry {
   std::filesystem::path path;
 };
 
+enum class ShadingMode {
+  Smooth = 0,
+  Flat = 1
+};
+
+struct ModelVariants {
+  Model smooth{};
+  Model flat{};
+};
+
 constexpr int kMatcapMenuMaxColumns = 4;
 constexpr float kMatcapTileSize = 64.0f;
 constexpr float kMatcapTileLabelHeight = 18.0f;
@@ -277,6 +287,8 @@ constexpr float kMatcapMenuHeaderHeight = 32.0f;
 constexpr float kMatcapMenuButtonGap = 8.0f;
 constexpr float kMatcapButtonWidth = 120.0f;
 constexpr float kMatcapButtonHeight = 36.0f;
+constexpr float kShadingButtonWidth = 140.0f;
+constexpr float kShadingButtonHeight = 48.0f;
 
 void UnloadMatcaps(std::vector<MatcapEntry> &matcaps) {
   for (auto &entry : matcaps) {
@@ -505,7 +517,12 @@ void DestroyModel(Model &model) {
   model = Model{};
 }
 
-Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
+void DestroyModelVariants(ModelVariants &variants) {
+  DestroyModel(variants.smooth);
+  DestroyModel(variants.flat);
+}
+
+Model CreateSmoothModelFrom(const manifold::MeshGL &meshGL) {
   Model model = {0};
   const int vertexCount = meshGL.NumVert();
   const int triangleCount = meshGL.NumTri();
@@ -703,6 +720,129 @@ Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
   }
 
   return model;
+}
+
+Model CreateFlatModelFrom(const manifold::MeshGL &meshGL) {
+  Model model = {0};
+  const int vertexCount = meshGL.NumVert();
+  const int triangleCount = meshGL.NumTri();
+
+  if (vertexCount <= 0 || triangleCount <= 0) {
+    return model;
+  }
+
+  const int stride = meshGL.numProp;
+  std::vector<Vector3> positions(vertexCount);
+  for (int v = 0; v < vertexCount; ++v) {
+    const int base = v * stride;
+    const float cadX = meshGL.vertProperties[base + 0] * kSceneScale;
+    const float cadY = meshGL.vertProperties[base + 1] * kSceneScale;
+    const float cadZ = meshGL.vertProperties[base + 2] * kSceneScale;
+    positions[v] = {cadX, cadZ, -cadY};
+  }
+
+  constexpr int kMaxVerticesPerMesh = std::numeric_limits<unsigned short>::max();
+  const int maxTrianglesPerChunk = std::max(1, kMaxVerticesPerMesh / 3);
+
+  std::vector<Mesh> meshes;
+  meshes.reserve(static_cast<size_t>(triangleCount) / maxTrianglesPerChunk + 1);
+
+  const Color base = kBaseColor;
+
+  int triIndex = 0;
+  while (triIndex < triangleCount) {
+    const int remaining = triangleCount - triIndex;
+    const int chunkTriangles = std::min(remaining, maxTrianglesPerChunk);
+    const int chunkVertices = chunkTriangles * 3;
+
+    Mesh chunk = {0};
+    chunk.vertexCount = chunkVertices;
+    chunk.triangleCount = chunkTriangles;
+    chunk.vertices = static_cast<float *>(MemAlloc(chunkVertices * 3 * sizeof(float)));
+    chunk.normals = static_cast<float *>(MemAlloc(chunkVertices * 3 * sizeof(float)));
+    chunk.colors = static_cast<unsigned char *>(MemAlloc(chunkVertices * 4 * sizeof(unsigned char)));
+    chunk.indices = static_cast<unsigned short *>(MemAlloc(chunkTriangles * 3 * sizeof(unsigned short)));
+    chunk.texcoords = nullptr;
+    chunk.texcoords2 = nullptr;
+    chunk.tangents = nullptr;
+
+    for (int t = 0; t < chunkTriangles; ++t) {
+      const int globalTri = triIndex + t;
+      const int i0 = meshGL.triVerts[globalTri * 3 + 0];
+      const int i1 = meshGL.triVerts[globalTri * 3 + 1];
+      const int i2 = meshGL.triVerts[globalTri * 3 + 2];
+
+      const Vector3 p0 = positions[i0];
+      const Vector3 p1 = positions[i1];
+      const Vector3 p2 = positions[i2];
+
+      const Vector3 u = {p1.x - p0.x, p1.y - p0.y, p1.z - p0.z};
+      const Vector3 v = {p2.x - p0.x, p2.y - p0.y, p2.z - p0.z};
+      Vector3 n = {u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z,
+                   u.x * v.y - u.y * v.x};
+      const float length = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+      if (length > 0.0f) {
+        const float invLen = 1.0f / length;
+        n.x *= invLen;
+        n.y *= invLen;
+        n.z *= invLen;
+      } else {
+        n = {0.0f, 1.0f, 0.0f};
+      }
+
+      const int baseVertex = t * 3;
+      const Vector3 triPositions[3] = {p0, p1, p2};
+      for (int j = 0; j < 3; ++j) {
+        const Vector3 pos = triPositions[j];
+        const int dst = baseVertex + j;
+        chunk.vertices[dst * 3 + 0] = pos.x;
+        chunk.vertices[dst * 3 + 1] = pos.y;
+        chunk.vertices[dst * 3 + 2] = pos.z;
+
+        chunk.normals[dst * 3 + 0] = n.x;
+        chunk.normals[dst * 3 + 1] = n.y;
+        chunk.normals[dst * 3 + 2] = n.z;
+
+        chunk.colors[dst * 4 + 0] = base.r;
+        chunk.colors[dst * 4 + 1] = base.g;
+        chunk.colors[dst * 4 + 2] = base.b;
+        chunk.colors[dst * 4 + 3] = base.a;
+
+        chunk.indices[dst] = static_cast<unsigned short>(dst);
+      }
+    }
+
+    UploadMesh(&chunk, false);
+    meshes.push_back(chunk);
+    triIndex += chunkTriangles;
+  }
+
+  if (meshes.empty()) {
+    return model;
+  }
+
+  model.transform = MatrixIdentity();
+  model.meshCount = static_cast<int>(meshes.size());
+  model.meshes = static_cast<Mesh *>(MemAlloc(model.meshCount * sizeof(Mesh)));
+  for (int i = 0; i < model.meshCount; ++i) {
+    model.meshes[i] = meshes[i];
+  }
+  model.materialCount = 1;
+  model.materials = static_cast<Material *>(MemAlloc(sizeof(Material)));
+  model.materials[0] = LoadMaterialDefault();
+  model.meshMaterial = static_cast<int *>(MemAlloc(model.meshCount * sizeof(int)));
+  for (int i = 0; i < model.meshCount; ++i) {
+    model.meshMaterial[i] = 0;
+  }
+
+  return model;
+}
+
+ModelVariants CreateModelVariantsFrom(const manifold::MeshGL &meshGL) {
+  ModelVariants variants;
+  variants.smooth = CreateSmoothModelFrom(meshGL);
+  variants.flat = CreateFlatModelFrom(meshGL);
+  return variants;
 }
 
 void DrawAxes(float length) {
@@ -903,12 +1043,15 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   return result;
 }
 
-bool ReplaceScene(Model &model,
+bool ReplaceScene(ModelVariants &models,
                   const std::shared_ptr<manifold::Manifold> &scene) {
   if (!scene) return false;
-  Model newModel = CreateRaylibModelFrom(scene->GetMeshGL());
-  DestroyModel(model);
-  model = newModel;
+  ModelVariants newModels = CreateModelVariantsFrom(scene->GetMeshGL());
+  if (newModels.smooth.meshCount == 0 && newModels.flat.meshCount == 0) {
+    return false;
+  }
+  DestroyModelVariants(models);
+  models = newModels;
   return true;
 }
 
@@ -1003,7 +1146,21 @@ int main() {
     }
   }
 
-  Model model = CreateRaylibModelFrom(scene->GetMeshGL());
+  ModelVariants modelVariants = CreateModelVariantsFrom(scene->GetMeshGL());
+  ShadingMode shadingMode = ShadingMode::Smooth;
+  auto getActiveModel = [&]() -> Model & {
+    Model *primary = (shadingMode == ShadingMode::Flat) ? &modelVariants.flat
+                                                        : &modelVariants.smooth;
+    if (primary->meshCount > 0) {
+      return *primary;
+    }
+    Model *alternate = (primary == &modelVariants.flat) ? &modelVariants.smooth
+                                                        : &modelVariants.flat;
+    if (alternate->meshCount > 0) {
+      return *alternate;
+    }
+    return *primary;
+  };
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
   Shader toonShader = LoadShaderFromMemory(kToonVS, kToonFS);
@@ -1014,7 +1171,7 @@ int main() {
   if (outlineShader.id == 0 || toonShader.id == 0 || matcapShader.id == 0 ||
       normalDepthShader.id == 0 || edgeShader.id == 0) {
     TraceLog(LOG_ERROR, "Failed to load one or more shaders.");
-    DestroyModel(model);
+    DestroyModelVariants(modelVariants);
     if (brandingFontCustom) {
       UnloadFont(brandingFont);
     }
@@ -1157,23 +1314,43 @@ int main() {
                                      CheckCollisionPointRec(mousePos, matcapButtonRect);
     const bool matcapPopupHovered = showMatcapPopup && matcapItemCount > 0 &&
                                     CheckCollisionPointRec(mousePos, matcapPopupRect);
-    bool matcapUiBlockingMouse = !matcaps.empty() &&
-                                 (matcapButtonHovered || (showMatcapPopup && matcapPopupHovered));
+    bool uiBlockingMouse = false;
 
     if (matcaps.empty()) {
       showMatcapPopup = false;
-    } else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-      if (matcapButtonHovered) {
-        showMatcapPopup = !showMatcapPopup;
-      } else if (showMatcapPopup && matcapPopupHovered) {
-        const int hitIndex = MatcapIndexAtPosition(mousePos, matcapPopupRect, matcapItemCount);
-        if (hitIndex >= 0) {
-          const int desired = (hitIndex == 0) ? -1 : static_cast<int>(hitIndex - 1);
-          currentMatcap = desired;
+    } else {
+      uiBlockingMouse = matcapButtonHovered || (showMatcapPopup && matcapPopupHovered);
+      if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        if (matcapButtonHovered) {
+          showMatcapPopup = !showMatcapPopup;
+        } else if (showMatcapPopup && matcapPopupHovered) {
+          const int hitIndex = MatcapIndexAtPosition(mousePos, matcapPopupRect, matcapItemCount);
+          if (hitIndex >= 0) {
+            const int desired = (hitIndex == 0) ? -1 : static_cast<int>(hitIndex - 1);
+            currentMatcap = desired;
+            showMatcapPopup = false;
+          }
+        } else if (showMatcapPopup) {
           showMatcapPopup = false;
         }
-      } else if (showMatcapPopup) {
-        showMatcapPopup = false;
+      }
+    }
+
+    Rectangle shadingButtonRect = {
+        matcapButtonRect.x,
+        matcapButtonRect.y + matcapButtonRect.height + 8.0f,
+        kShadingButtonWidth,
+        kShadingButtonHeight};
+    const bool shadingButtonHovered = CheckCollisionPointRec(mousePos, shadingButtonRect);
+    uiBlockingMouse = uiBlockingMouse || shadingButtonHovered;
+
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && shadingButtonHovered) {
+      if (shadingMode == ShadingMode::Smooth) {
+        if (modelVariants.flat.meshCount > 0) {
+          shadingMode = ShadingMode::Flat;
+        }
+      } else {
+        shadingMode = ShadingMode::Smooth;
       }
     }
 
@@ -1181,7 +1358,7 @@ int main() {
       auto load = LoadSceneFromFile(runtime, scriptPath);
       if (load.success) {
         scene = load.manifold;
-        ReplaceScene(model, scene);
+        ReplaceScene(modelVariants, scene);
         reportStatus(load.message);
       } else {
         reportStatus(load.message);
@@ -1278,7 +1455,7 @@ int main() {
       }
     }
 
-    if (!matcapUiBlockingMouse && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+    if (!uiBlockingMouse && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
       orbitYaw -= mouseDelta.x * 0.01f;
       orbitPitch += mouseDelta.y * 0.01f;
       const float limit = DEG2RAD * 89.0f;
@@ -1296,7 +1473,7 @@ int main() {
     const Vector3 right = Vector3Normalize(Vector3CrossProduct(worldUp, forward));
     const Vector3 camUp = Vector3CrossProduct(forward, right);
 
-    if (!matcapUiBlockingMouse && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+    if (!uiBlockingMouse && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
       camera.target = Vector3Add(camera.target,
                                  Vector3Scale(right, mouseDelta.x * 0.01f * orbitDistance));
       camera.target = Vector3Add(camera.target,
@@ -1362,6 +1539,12 @@ int main() {
 
     SetShaderValue(normalDepthShader, locNear, &zNear, SHADER_UNIFORM_FLOAT);
     SetShaderValue(normalDepthShader, locFar, &zFar, SHADER_UNIFORM_FLOAT);
+
+    if (shadingMode == ShadingMode::Flat && modelVariants.flat.meshCount == 0) {
+      shadingMode = ShadingMode::Smooth;
+    }
+
+    Model &model = getActiveModel();
 
     Material *shadedMaterial = &toonMat;
     if (currentMatcap >= 0 && currentMatcap < static_cast<int>(matcaps.size())) {
@@ -1488,10 +1671,7 @@ int main() {
           DrawRectangleRounded(imageRect, 0.2f, 6, tileColor);
           DrawRectangleRoundedLinesEx(imageRect, 0.2f, 6, 1.0f, Fade(DARKGRAY, 0.25f));
 
-          std::string label = (idx == 0) ? "None" : matcaps[idx - 1].name;
-          if (label.size() > 18) {
-            label = label.substr(0, 15) + "...";
-          }
+          std::string label = (idx == 0) ? "None" : std::to_string(idx);
 
           if (idx == 0) {
             Vector2 noneSize = MeasureTextEx(brandingFont, "None", labelFontSize, 0.0f);
@@ -1518,6 +1698,29 @@ int main() {
       }
     }
 
+    Color shadingFill = shadingButtonHovered ? Fade(LIGHTGRAY, 0.6f) : Fade(LIGHTGRAY, 0.35f);
+    Color shadingOutline = Fade(DARKGRAY, shadingButtonHovered ? 0.6f : 0.4f);
+    DrawRectangleRounded(shadingButtonRect, 0.3f, 8, shadingFill);
+    DrawRectangleRoundedLinesEx(shadingButtonRect, 0.3f, 8, 1.0f, shadingOutline);
+
+    const char *shadingTitle = "Shading";
+    const float shadingTitleSize = 16.0f;
+    Vector2 shadingTitleSizeVec = MeasureTextEx(brandingFont, shadingTitle, shadingTitleSize, 0.0f);
+    Vector2 shadingTitlePos = {
+        shadingButtonRect.x + 12.0f,
+        shadingButtonRect.y + 6.0f};
+    DrawTextEx(brandingFont, shadingTitle, shadingTitlePos, shadingTitleSize, 0.0f, DARKGRAY);
+
+    const char *shadingState =
+        (shadingMode == ShadingMode::Smooth) ? "Smooth" : "Flat";
+    const float shadingStateSize = 20.0f;
+    Vector2 shadingStateSizeVec = MeasureTextEx(brandingFont, shadingState, shadingStateSize, 0.0f);
+    Vector2 shadingStatePos = {
+        shadingButtonRect.x + (shadingButtonRect.width - shadingStateSizeVec.x) * 0.5f,
+        shadingButtonRect.y + shadingButtonRect.height - shadingStateSizeVec.y - 8.0f};
+    DrawTextEx(brandingFont, shadingState, shadingStatePos, shadingStateSize, 0.0f,
+               shadingMode == ShadingMode::Smooth ? DARKGRAY : Fade(DARKBLUE, 0.9f));
+
     const float margin = 20.0f;
     const Vector2 textSize = MeasureTextEx(brandingFont, kBrandText, kBrandFontSize, 0.0f);
     const Vector2 brandPos = {
@@ -1543,7 +1746,7 @@ int main() {
   UnloadMaterial(outlineMat);   // also releases the shader
   UnloadShader(edgeShader);
   UnloadMatcaps(matcaps);
-  DestroyModel(model);
+  DestroyModelVariants(modelVariants);
   if (brandingFontCustom) {
     UnloadFont(brandingFont);
   }
