@@ -1325,8 +1325,8 @@ int main() {
 
     const bool matcapButtonHovered = !matcaps.empty() &&
                                      CheckCollisionPointRec(mousePos, matcapButtonRect);
-    const bool matcapPopupHovered = showMatcapPopup && matcapItemCount > 0 &&
-                                    CheckCollisionPointRec(mousePos, matcapPopupRect);
+    bool matcapPopupHovered = showMatcapPopup && matcapItemCount > 0 &&
+                              CheckCollisionPointRec(mousePos, matcapPopupRect);
     bool uiBlockingMouse = false;
 
     if (matcaps.empty()) {
@@ -1365,6 +1365,20 @@ int main() {
           }
         }
       }
+    }
+
+    if (showMatcapPopup && matcapItemCount > 0) {
+      matcapPopupRect = ComputeMatcapPopupRect(matcapItemCount, matcapButtonRect,
+                                               screenWidth, screenHeight);
+      const int columns = std::max(1, std::min(kMatcapMenuMaxColumns,
+                                               static_cast<int>(matcapItemCount)));
+      const int rows = (static_cast<int>(matcapItemCount) + columns - 1) / columns;
+      const float cellHeight = kMatcapTileSize + kMatcapTileLabelHeight;
+      const float contentHeight = rows * cellHeight + (rows + 1) * kMatcapMenuPadding;
+      const float visibleHeight = matcapPopupRect.height - kMatcapMenuHeaderHeight - 2.0f * kMatcapMenuPadding;
+      matcapScrollMax = std::max(0.0f, contentHeight - visibleHeight);
+      matcapScrollOffset = Clamp(matcapScrollOffset, 0.0f, matcapScrollMax);
+      matcapPopupHovered = CheckCollisionPointRec(mousePos, matcapPopupRect);
     }
 
     Rectangle shadingButtonRect = {
