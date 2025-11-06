@@ -289,6 +289,7 @@ constexpr float kMatcapButtonWidth = 120.0f;
 constexpr float kMatcapButtonHeight = 36.0f;
 constexpr float kShadingButtonWidth = 140.0f;
 constexpr float kShadingButtonHeight = 48.0f;
+constexpr float kMatcapScrollBarWidth = 8.0f;
 
 void UnloadMatcaps(std::vector<MatcapEntry> &matcaps) {
   for (auto &entry : matcaps) {
@@ -312,21 +313,21 @@ Rectangle ComputeMatcapPopupRect(size_t itemCount,
                                            static_cast<int>(itemCount)));
   const int rows = (static_cast<int>(itemCount) + columns - 1) / columns;
   const float cellHeight = kMatcapTileSize + kMatcapTileLabelHeight;
-  const float width = columns * kMatcapTileSize + (columns + 1) * kMatcapMenuPadding;
+  const float width = columns * kMatcapTileSize + (columns + 1) * kMatcapMenuPadding + kMatcapScrollBarWidth + kMatcapMenuPadding;
   const float height = kMatcapMenuHeaderHeight +
                        rows * cellHeight + (rows + 1) * kMatcapMenuPadding;
 
   popup.width = width;
   popup.height = height;
   popup.x = buttonRect.x + buttonRect.width - width;
-  popup.y = buttonRect.y + buttonRect.height + kMatcapMenuButtonGap;
+  popup.y = buttonRect.y;
 
   if (popup.x < kMatcapMenuPadding) {
     popup.x = kMatcapMenuPadding;
   }
-  if (popup.y + popup.height > static_cast<float>(screenHeight) - kMatcapMenuPadding) {
-    popup.y = std::max(kMatcapMenuPadding,
-                       static_cast<float>(screenHeight) - popup.height - kMatcapMenuPadding);
+  if (popup.x + popup.width > static_cast<float>(screenWidth) - kMatcapMenuPadding) {
+    popup.x = std::max(kMatcapMenuPadding,
+                       static_cast<float>(screenWidth) - popup.width - kMatcapMenuPadding);
   }
 
   return popup;
@@ -334,7 +335,8 @@ Rectangle ComputeMatcapPopupRect(size_t itemCount,
 
 int MatcapIndexAtPosition(const Vector2 &point,
                           const Rectangle &popupRect,
-                          size_t itemCount) {
+                          size_t itemCount,
+                          float scrollOffset) {
   if (itemCount == 0) return -1;
   if (!CheckCollisionPointRec(point, popupRect)) return -1;
 
@@ -344,6 +346,7 @@ int MatcapIndexAtPosition(const Vector2 &point,
     return -1;
   }
   localY -= kMatcapMenuHeaderHeight;
+  localY += scrollOffset;
   if (localY < 0.0f) {
     return -1;
   }
@@ -1067,6 +1070,8 @@ int main() {
   auto matcaps = LoadMatcapsFromDir(matcapDirectory);
   int currentMatcap = -1;
   bool showMatcapPopup = false;
+  float matcapScrollOffset = 0.0f;
+  float matcapScrollMax = 0.0f;
   if (!matcaps.empty()) {
     TraceLog(LOG_INFO, "Loaded %zu matcap(s) from %s", matcaps.size(),
              matcapDirectory.string().c_str());
@@ -1308,6 +1313,14 @@ int main() {
     if (showMatcapPopup && matcapItemCount > 0) {
       matcapPopupRect = ComputeMatcapPopupRect(matcapItemCount, matcapButtonRect,
                                                screenWidth, screenHeight);
+      const int columns = std::max(1, std::min(kMatcapMenuMaxColumns,
+                                               static_cast<int>(matcapItemCount)));
+      const int rows = (static_cast<int>(matcapItemCount) + columns - 1) / columns;
+      const float cellHeight = kMatcapTileSize + kMatcapTileLabelHeight;
+      const float contentHeight = rows * cellHeight + (rows + 1) * kMatcapMenuPadding;
+      const float visibleHeight = matcapPopupRect.height - kMatcapMenuHeaderHeight - 2.0f * kMatcapMenuPadding;
+      matcapScrollMax = std::max(0.0f, contentHeight - visibleHeight);
+      matcapScrollOffset = Clamp(matcapScrollOffset, 0.0f, matcapScrollMax);
     }
 
     const bool matcapButtonHovered = !matcaps.empty() &&
@@ -1318,20 +1331,38 @@ int main() {
 
     if (matcaps.empty()) {
       showMatcapPopup = false;
+      matcapScrollOffset = 0.0f;
     } else {
       uiBlockingMouse = matcapButtonHovered || (showMatcapPopup && matcapPopupHovered);
       if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         if (matcapButtonHovered) {
           showMatcapPopup = !showMatcapPopup;
+          if (!showMatcapPopup) {
+            matcapScrollOffset = 0.0f;
+          }
         } else if (showMatcapPopup && matcapPopupHovered) {
-          const int hitIndex = MatcapIndexAtPosition(mousePos, matcapPopupRect, matcapItemCount);
+          Vector2 adjustedMouse = mousePos;
+          adjustedMouse.y += matcapScrollOffset;
+          const int hitIndex = MatcapIndexAtPosition(adjustedMouse, matcapPopupRect, matcapItemCount, 0.0f);
           if (hitIndex >= 0) {
             const int desired = (hitIndex == 0) ? -1 : static_cast<int>(hitIndex - 1);
             currentMatcap = desired;
             showMatcapPopup = false;
+            matcapScrollOffset = 0.0f;
           }
         } else if (showMatcapPopup) {
           showMatcapPopup = false;
+          matcapScrollOffset = 0.0f;
+        }
+      }
+      if (showMatcapPopup) {
+        const float wheel = GetMouseWheelMove();
+        if (wheel != 0.0f) {
+          matcapScrollOffset = Clamp(matcapScrollOffset - wheel * 20.0f,
+                                     0.0f, matcapScrollMax);
+          if (matcapPopupHovered) {
+            uiBlockingMouse = true;
+          }
         }
       }
     }
@@ -1594,6 +1625,28 @@ int main() {
     DrawTextureRec(rtColor.texture, srcRect, {0.0f, 0.0f}, WHITE);
     EndShaderMode();
 
+    Color shadingFill = shadingButtonHovered ? Fade(LIGHTGRAY, 0.6f) : Fade(LIGHTGRAY, 0.35f);
+    Color shadingOutline = Fade(DARKGRAY, shadingButtonHovered ? 0.6f : 0.4f);
+    DrawRectangleRounded(shadingButtonRect, 0.3f, 8, shadingFill);
+    DrawRectangleRoundedLinesEx(shadingButtonRect, 0.3f, 8, 1.0f, shadingOutline);
+
+    const char *shadingTitle = "Shading";
+    const float shadingTitleSize = 16.0f;
+    Vector2 shadingTitlePos = {
+        shadingButtonRect.x + 12.0f,
+        shadingButtonRect.y + 6.0f};
+    DrawTextEx(brandingFont, shadingTitle, shadingTitlePos, shadingTitleSize, 0.0f, DARKGRAY);
+
+    const char *shadingState =
+        (shadingMode == ShadingMode::Smooth) ? "Smooth" : "Flat";
+    const float shadingStateSize = 20.0f;
+    Vector2 shadingStateSizeVec = MeasureTextEx(brandingFont, shadingState, shadingStateSize, 0.0f);
+    Vector2 shadingStatePos = {
+        shadingButtonRect.x + (shadingButtonRect.width - shadingStateSizeVec.x) * 0.5f,
+        shadingButtonRect.y + shadingButtonRect.height - shadingStateSizeVec.y - 8.0f};
+    DrawTextEx(brandingFont, shadingState, shadingStatePos, shadingStateSize, 0.0f,
+               shadingMode == ShadingMode::Smooth ? DARKGRAY : Fade(DARKBLUE, 0.9f));
+
     if (!matcaps.empty()) {
       Color buttonFill = matcapButtonHovered ? Fade(LIGHTGRAY, 0.6f) : Fade(LIGHTGRAY, 0.35f);
       Color buttonOutline = Fade(DARKGRAY, matcapButtonHovered ? 0.6f : 0.4f);
@@ -1632,10 +1685,8 @@ int main() {
       DrawTextEx(brandingFont, buttonLabel, labelPos, buttonFontSize, 0.0f, DARKGRAY);
 
       if (showMatcapPopup && matcapItemCount > 0) {
-        Color popupBg = Fade(RAYWHITE, 0.97f);
-        Color popupOutline = Fade(DARKGRAY, 0.35f);
-        DrawRectangleRounded(matcapPopupRect, 0.1f, 6, popupBg);
-        DrawRectangleRoundedLinesEx(matcapPopupRect, 0.1f, 6, 1.0f, popupOutline);
+        DrawRectangleRounded(matcapPopupRect, 0.1f, 6, Fade(RAYWHITE, 1.0f));
+        DrawRectangleRoundedLinesEx(matcapPopupRect, 0.1f, 6, 1.0f, Fade(DARKGRAY, 0.35f));
 
         const char *popupTitle = "Matcaps";
         const float popupTitleSize = 20.0f;
@@ -1647,7 +1698,19 @@ int main() {
         const int columns = std::max(1, std::min(kMatcapMenuMaxColumns,
                                                  static_cast<int>(matcapItemCount)));
         const float cellHeight = kMatcapTileSize + kMatcapTileLabelHeight;
-        const int hoveredIndex = MatcapIndexAtPosition(mousePos, matcapPopupRect, matcapItemCount);
+        Rectangle contentRect = {
+            matcapPopupRect.x + kMatcapMenuPadding,
+            matcapPopupRect.y + kMatcapMenuPadding + kMatcapMenuHeaderHeight,
+            matcapPopupRect.width - 2.0f * kMatcapMenuPadding - kMatcapScrollBarWidth - kMatcapMenuPadding,
+            matcapPopupRect.height - kMatcapMenuHeaderHeight - 2.0f * kMatcapMenuPadding};
+        BeginScissorMode(static_cast<int>(contentRect.x),
+                         static_cast<int>(contentRect.y),
+                         static_cast<int>(contentRect.width),
+                         static_cast<int>(contentRect.height));
+
+        Vector2 adjustedMouse = mousePos;
+        adjustedMouse.y += matcapScrollOffset;
+        const int hoveredIndex = MatcapIndexAtPosition(adjustedMouse, matcapPopupRect, matcapItemCount, 0.0f);
         const float labelFontSize = 16.0f;
 
         for (size_t idx = 0; idx < matcapItemCount; ++idx) {
@@ -1657,7 +1720,7 @@ int main() {
                               col * (kMatcapTileSize + kMatcapMenuPadding);
           const float cellY = matcapPopupRect.y + kMatcapMenuPadding +
                               kMatcapMenuHeaderHeight +
-                              row * (cellHeight + kMatcapMenuPadding);
+                              row * (cellHeight + kMatcapMenuPadding) - matcapScrollOffset;
 
           Rectangle imageRect = {cellX, cellY, kMatcapTileSize, kMatcapTileSize};
           Rectangle labelRect = {cellX, cellY + kMatcapTileSize, kMatcapTileSize, kMatcapTileLabelHeight};
@@ -1668,6 +1731,7 @@ int main() {
           Color tileColor = selected ? Fade(SKYBLUE, 0.35f) : Fade(LIGHTGRAY, 0.25f);
           if (hovered) tileColor = Fade(SKYBLUE, 0.45f);
 
+          DrawRectangleRec(imageRect, Fade(RAYWHITE, 0.01f));
           DrawRectangleRounded(imageRect, 0.2f, 6, tileColor);
           DrawRectangleRoundedLinesEx(imageRect, 0.2f, 6, 1.0f, Fade(DARKGRAY, 0.25f));
 
@@ -1695,31 +1759,32 @@ int main() {
               labelRect.y + (labelRect.height - labelSizeSmall.y) * 0.5f};
           DrawTextEx(brandingFont, label.c_str(), labelPosSmall, labelFontSize, 0.0f, DARKGRAY);
         }
+
+        EndScissorMode();
+
+        if (matcapScrollMax > 0.0f) {
+          Rectangle scrollBarArea = {
+              matcapPopupRect.x + matcapPopupRect.width - kMatcapMenuPadding - kMatcapScrollBarWidth,
+              matcapPopupRect.y + kMatcapMenuPadding + kMatcapMenuHeaderHeight,
+              kMatcapScrollBarWidth,
+              matcapPopupRect.height - kMatcapMenuHeaderHeight - 2.0f * kMatcapMenuPadding};
+          DrawRectangleRounded(scrollBarArea, 0.4f, 6, Fade(DARKGRAY, 0.15f));
+
+          const int columns = std::max(1, std::min(kMatcapMenuMaxColumns,
+                                                   static_cast<int>(matcapItemCount)));
+          const int rows = (static_cast<int>(matcapItemCount) + columns - 1) / columns;
+          const float cellHeight = kMatcapTileSize + kMatcapTileLabelHeight;
+          const float contentHeight = rows * cellHeight + (rows + 1) * kMatcapMenuPadding;
+          const float visibleHeight = scrollBarArea.height;
+          const float thumbHeight = std::max(visibleHeight * (visibleHeight / contentHeight), 12.0f);
+          const float scrollRatio = (visibleHeight - thumbHeight) / matcapScrollMax;
+          Rectangle thumb = scrollBarArea;
+          thumb.height = thumbHeight;
+          thumb.y += (matcapScrollOffset * scrollRatio);
+          DrawRectangleRounded(thumb, 0.6f, 6, Fade(DARKGRAY, 0.45f));
+        }
       }
     }
-
-    Color shadingFill = shadingButtonHovered ? Fade(LIGHTGRAY, 0.6f) : Fade(LIGHTGRAY, 0.35f);
-    Color shadingOutline = Fade(DARKGRAY, shadingButtonHovered ? 0.6f : 0.4f);
-    DrawRectangleRounded(shadingButtonRect, 0.3f, 8, shadingFill);
-    DrawRectangleRoundedLinesEx(shadingButtonRect, 0.3f, 8, 1.0f, shadingOutline);
-
-    const char *shadingTitle = "Shading";
-    const float shadingTitleSize = 16.0f;
-    Vector2 shadingTitleSizeVec = MeasureTextEx(brandingFont, shadingTitle, shadingTitleSize, 0.0f);
-    Vector2 shadingTitlePos = {
-        shadingButtonRect.x + 12.0f,
-        shadingButtonRect.y + 6.0f};
-    DrawTextEx(brandingFont, shadingTitle, shadingTitlePos, shadingTitleSize, 0.0f, DARKGRAY);
-
-    const char *shadingState =
-        (shadingMode == ShadingMode::Smooth) ? "Smooth" : "Flat";
-    const float shadingStateSize = 20.0f;
-    Vector2 shadingStateSizeVec = MeasureTextEx(brandingFont, shadingState, shadingStateSize, 0.0f);
-    Vector2 shadingStatePos = {
-        shadingButtonRect.x + (shadingButtonRect.width - shadingStateSizeVec.x) * 0.5f,
-        shadingButtonRect.y + shadingButtonRect.height - shadingStateSizeVec.y - 8.0f};
-    DrawTextEx(brandingFont, shadingState, shadingStatePos, shadingStateSize, 0.0f,
-               shadingMode == ShadingMode::Smooth ? DARKGRAY : Fade(DARKBLUE, 0.9f));
 
     const float margin = 20.0f;
     const Vector2 textSize = MeasureTextEx(brandingFont, kBrandText, kBrandFontSize, 0.0f);
