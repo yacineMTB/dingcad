@@ -1031,12 +1031,16 @@ JSValue JsLoadMesh(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
   if (!std::filesystem::exists(fsPath, ec) || ec) {
     const std::string msg = "loadMesh: file not found '" + resolvedPath + "' (expected in ~/Downloads/models)";
     PrintLoadMeshError(msg);
-    return JS_ThrowInternalError(ctx, "loadMesh: file not found '%s'", resolvedPath.c_str());
+    // Return an empty manifold so the scene can continue loading.
+    auto handle = std::make_shared<manifold::Manifold>();
+    return WrapManifold(ctx, std::move(handle));
   }
   if (!std::filesystem::is_regular_file(fsPath, ec) || ec) {
     const std::string msg = "loadMesh: not a regular file '" + resolvedPath + "'";
     PrintLoadMeshError(msg);
-    return JS_ThrowInternalError(ctx, "loadMesh: not a regular file '%s'", resolvedPath.c_str());
+    // Return an empty manifold so the scene can continue loading.
+    auto handle = std::make_shared<manifold::Manifold>();
+    return WrapManifold(ctx, std::move(handle));
   }
 
   bool forceCleanup = false;
