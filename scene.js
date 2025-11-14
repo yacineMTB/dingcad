@@ -134,9 +134,9 @@ const fronthole = translate(
 const harnessWithConnector = difference(harnessShell, connectorHole,  fronthole);
 
 // export const scene = harnessWithConnector;
-//export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/2A2A2A_DBDBDB_6A6A6A_949494-512px.png');
+//export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/512/2A2A2A_DBDBDB_6A6A6A_949494-512px.png');
 // Matcap options (uncomment one to switch)
-// export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/0A0A0A_A9A9A9_525252_747474-512px.png');
-// export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/0C0CC3_04049F_040483_04045C-512px.png');
- export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/0C430C_257D25_439A43_3C683C-512px.png');
-// export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/0D0DBD_040497_04047B_040455-512px.png');
+// export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/512/0A0A0A_A9A9A9_525252_747474-512px.png');
+// export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/512/0C0CC3_04049F_040483_04045C-512px.png');
+ export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/512/0C430C_257D25_439A43_3C683C-512px.png');
+// export const scene = applyShader(harnessWithConnector, './viewer/assets/matcaps/512/0D0DBD_040497_04047B_040455-512px.png');
