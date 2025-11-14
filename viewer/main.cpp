@@ -605,6 +605,7 @@ struct LoadResult {
   std::shared_ptr<manifold::Manifold> manifold;
   std::string message;
   std::vector<std::filesystem::path> dependencies;
+  std::optional<std::filesystem::path> matcapPath;
 };
 
 LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path) {
@@ -703,6 +704,26 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     return result;
   }
 
+  {
+    JSValue matcapVal = JS_GetPropertyStr(ctx, sceneVal, "_matcap");
+    if (!JS_IsException(matcapVal) && !JS_IsUndefined(matcapVal) && JS_IsString(matcapVal)) {
+      const char *mcStr = JS_ToCString(ctx, matcapVal);
+      if (mcStr && *mcStr) {
+        std::filesystem::path mcPath(mcStr);
+        if (mcPath.is_relative()) {
+          const std::filesystem::path base = absolutePath.parent_path();
+          mcPath = std::filesystem::absolute(base / mcPath).lexically_normal();
+        } else {
+          mcPath = std::filesystem::absolute(mcPath).lexically_normal();
+        }
+        result.matcapPath = mcPath;
+        g_module_loader_data.dependencies.insert(*result.matcapPath);
+      }
+      if (mcStr) JS_FreeCString(ctx, mcStr);
+    }
+    JS_FreeValue(ctx, matcapVal);
+  }
+
   result.manifold = sceneHandle;
   result.success = true;
   result.message = "Loaded " + absolutePath.string();
@@ -760,6 +781,7 @@ int main() {
   std::string statusMessage;
   std::filesystem::path scriptPath;
   std::unordered_map<std::filesystem::path, WatchedFile> watchedFiles;
+  std::optional<std::filesystem::path> currentMatcapPath;
   auto defaultScript = FindDefaultScene();
   auto reportStatus = [&](const std::string &message) {
     statusMessage = message;
@@ -785,6 +807,7 @@ int main() {
     if (load.success) {
       scene = load.manifold;
       reportStatus(load.message);
+      currentMatcapPath = load.matcapPath;
     } else {
       reportStatus(load.message);
     }
@@ -808,8 +831,36 @@ int main() {
   Shader toonShader = LoadShaderFromMemory(kToonVS, kToonFS);
   Shader normalDepthShader = LoadShaderFromMemory(kNormalDepthVS, kNormalDepthFS);
   Shader edgeShader = LoadShaderFromMemory(kEdgeQuadVS, kEdgeFS);
+  // Matcap shader
+  const char* kMatcapVS = R"glsl(
+#version 330
+in vec3 vertexPosition;
+in vec3 vertexNormal;
+uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 matView;
+out vec3 vNvs;
+void main() {
+    vec3 nvs = mat3(matView) * mat3(matModel) * vertexNormal;
+    vNvs = normalize(nvs);
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
+}
+)glsl";
+  const char* kMatcapFS = R"glsl(
+#version 330
+in vec3 vNvs;
+out vec4 finalColor;
+uniform sampler2D texture0; // raylib binds MATERIAL_MAP_ALBEDO here
+void main(){
+    vec3 n = normalize(vNvs);
+    // map view-space normal to 2D matcap UV
+    vec2 uv = n.xy * 0.5 + 0.5;
+    finalColor = texture(texture0, uv);
+}
+)glsl";
+  Shader matcapShader = LoadShaderFromMemory(kMatcapVS, kMatcapFS);
 
-  if (outlineShader.id == 0 || toonShader.id == 0 || normalDepthShader.id == 0 || edgeShader.id == 0) {
+  if (outlineShader.id == 0 || toonShader.id == 0 || normalDepthShader.id == 0 || edgeShader.id == 0 || matcapShader.id == 0) {
     TraceLog(LOG_ERROR, "Failed to load one or more shaders.");
     DestroyModel(model);
     if (brandingFontCustom) {
@@ -861,6 +912,22 @@ int main() {
   const int locDepthThreshold = GetShaderLocation(edgeShader, "depthThreshold");
   const int locEdgeIntensity = GetShaderLocation(edgeShader, "edgeIntensity");
   const int locInkColor = GetShaderLocation(edgeShader, "inkColor");
+
+  Material matcapMat = LoadMaterialDefault();
+  matcapMat.shader = matcapShader;
+  Texture2D matcapTexture = {0};
+  bool hasMatcap = false;
+
+  if (currentMatcapPath.has_value()) {
+    std::error_code texErr;
+    if (std::filesystem::exists(*currentMatcapPath, texErr) && !texErr) {
+      matcapTexture = LoadTexture(currentMatcapPath->string().c_str());
+      if (matcapTexture.id != 0) {
+        hasMatcap = true;
+        matcapMat.maps[MATERIAL_MAP_ALBEDO].texture = matcapTexture;
+      }
+    }
+  }
 
   // Static toon lighting configuration
   const Vector3 lightDirWS = Vector3Normalize({0.45f, 0.85f, 0.35f});
@@ -926,6 +993,21 @@ int main() {
         scene = load.manifold;
         ReplaceScene(model, scene);
         reportStatus(load.message);
+        currentMatcapPath = load.matcapPath;
+        if (hasMatcap) {
+          UnloadTexture(matcapTexture);
+          hasMatcap = false;
+        }
+        if (currentMatcapPath.has_value()) {
+          std::error_code texErr;
+          if (std::filesystem::exists(*currentMatcapPath, texErr) && !texErr) {
+            matcapTexture = LoadTexture(currentMatcapPath->string().c_str());
+            if (matcapTexture.id != 0) {
+              hasMatcap = true;
+              matcapMat.maps[MATERIAL_MAP_ALBEDO].texture = matcapTexture;
+            }
+          }
+        }
       } else {
         reportStatus(load.message);
       }
@@ -1121,7 +1203,7 @@ int main() {
     rlEnableBackfaceCulling();
 
     for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], toonMat, model.transform);
+      DrawMesh(model.meshes[i], hasMatcap ? matcapMat : toonMat, model.transform);
     }
     EndMode3D();
     EndTextureMode();
@@ -1171,6 +1253,7 @@ int main() {
   UnloadMaterial(normalDepthMat);
   UnloadMaterial(outlineMat);   // also releases the shader
   UnloadShader(edgeShader);
+  UnloadMaterial(matcapMat);
   DestroyModel(model);
   if (brandingFontCustom) {
     UnloadFont(brandingFont);
