@@ -1415,6 +1415,22 @@ void RegisterBindingsInternal(JSContext *ctx) {
                     JS_NewCFunction(ctx, JsSmoothOut, "smoothOut", 3));
   JS_SetPropertyStr(ctx, global, "minGap",
                     JS_NewCFunction(ctx, JsMinGap, "minGap", 3));
+  // applyShader(manifold, path) — attaches a matcap path hint to the JS object and returns it
+  auto JsApplyShader = [](JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) -> JSValue {
+    if (argc < 2) {
+      return JS_ThrowTypeError(ctx, "applyShader expects (manifold, path)");
+    }
+    JsManifold *target = GetJsManifold(ctx, argv[0]);
+    if (!target) return JS_EXCEPTION;
+    const char *pathStr = JS_ToCString(ctx, argv[1]);
+    if (!pathStr) return JS_EXCEPTION;
+    JSValue pathJs = JS_NewString(ctx, pathStr);
+    JS_FreeCString(ctx, pathStr);
+    JS_SetPropertyStr(ctx, const_cast<JSValue &>(argv[0]), "_matcap", pathJs);
+    return JS_DupValue(ctx, argv[0]);
+  };
+  JS_SetPropertyStr(ctx, global, "applyShader",
+                    JS_NewCFunction(ctx, JsApplyShader, "applyShader", 2));
   JS_FreeValue(ctx, global);
 }
 

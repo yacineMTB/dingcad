@@ -52,5 +52,6 @@
 - numPropertyVertices{manifold}
 - genus{manifold}
 - decompose polygons back to JS with slice/project return [[x,y],...] loops
+- applyShader{manifold, path:string} // tags manifold with matcap path used by viewer
 
 Assign your final solid to `scene` to render, e.g. `scene = cube({...});`.
