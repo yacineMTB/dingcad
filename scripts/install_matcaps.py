@@ -13,6 +13,17 @@ import urllib.error
 
 GITHUB_API_DIR_URL = "https://api.github.com/repos/nidorx/matcaps/contents/{res}"
 
+def _print_progress(done: int, total: int, downloaded: int, skipped: int, errors_count: int) -> None:
+	# simple single-line progress bar
+	width = 40
+	ratio = 1.0 if total == 0 else max(0.0, min(1.0, done / total))
+	filled = int(ratio * width)
+	bar = "#" * filled + "-" * (width - filled)
+	msg = f"[{bar}] {done}/{total} d:{downloaded} s:{skipped} e:{errors_count}"
+	# carriage return, no newline
+	sys.stdout.write("\r" + msg)
+	sys.stdout.flush()
+
 
 def get_repo_root() -> Path:
 	# scripts/ is one level under repo root
@@ -111,6 +122,9 @@ def main() -> None:
 	num_downloaded = 0
 	num_skipped = 0
 	errors: List[Tuple[str, str]] = []
+	total = len(items)
+	done = 0
+	_print_progress(done, total, num_downloaded, num_skipped, 0)
 
 	with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
 		future_to_name = {
@@ -129,8 +143,13 @@ def main() -> None:
 						num_skipped += 1
 			except Exception as e:
 				errors.append((name, str(e)))
+			finally:
+				done += 1
+				_print_progress(done, total, num_downloaded, num_skipped, len(errors))
 
 	elapsed = time.time() - start_time
+	# newline after progress bar
+	sys.stdout.write("\n")
 	print(f"Done in {elapsed:.1f}s: downloaded {num_downloaded}, skipped {num_skipped}, errors {len(errors)}.")
 	if errors:
 		print("Some files failed to download:")
