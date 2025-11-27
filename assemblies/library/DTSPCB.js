@@ -1,6 +1,6 @@
 const pcbWidth = 21;
 const pcbHeight = 15;
-const pcbThickness = 1.6;
+const pcbThickness = 2.6;
 
 const componentSize = 8.8;
 const componentTotalHeight = 8.1;
