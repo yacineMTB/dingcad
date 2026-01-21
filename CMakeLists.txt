@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+enable_testing()
+
 if(NOT DEFINED TBB_DIR)
   if(EXISTS "/opt/homebrew/opt/tbb/lib/cmake/TBB")
     set(TBB_DIR "/opt/homebrew/opt/tbb/lib/cmake/TBB" CACHE PATH "" FORCE)
@@ -27,3 +29,4 @@ set(MANIFOLD_PAR ON CACHE BOOL "" FORCE)
 
 add_subdirectory(vendor/manifold EXCLUDE_FROM_ALL)
 add_subdirectory(viewer)
+add_subdirectory(tests)
