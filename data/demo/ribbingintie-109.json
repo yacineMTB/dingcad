@@ -1,0 +1,27 @@
+{
+  "address": "Ribbingintie 109-11, 00890 Helsinki",
+  "coordinates": { "lat": 60.2685, "lon": 25.1955 },
+  "building_info": {
+    "type": "omakotitalo",
+    "year_built": 1985,
+    "material": "puu",
+    "floors": 2,
+    "area_m2": 135,
+    "heating": "kaukolampo",
+    "roof_type": "harjakatto",
+    "roof_material": "pelti"
+  },
+  "scene_js": "// Ribbingintie 109-11, Helsinki — 1980s omakotitalo\n// 2-story wood-frame house, gable roof, ~12x10m footprint\n\n// Foundation\nconst foundation = translate(box(12, 0.3, 10), 0, 0.15, 0);\nscene.add(foundation, {material: \"concrete\", color: [0.55, 0.55, 0.52]});\n\n// Ground floor walls\nconst gf_front = translate(box(12, 2.7, 0.2), 0, 1.65, -4.9);\nscene.add(gf_front, {material: \"wood\", color: [0.76, 0.60, 0.42]});\n\nconst gf_back = translate(box(12, 2.7, 0.2), 0, 1.65, 4.9);\nscene.add(gf_back, {material: \"wood\", color: [0.72, 0.56, 0.38]});\n\nconst gf_left = translate(box(0.2, 2.7, 10), -5.9, 1.65, 0);\nscene.add(gf_left, {material: \"wood\", color: [0.68, 0.53, 0.35]});\n\nconst gf_right = translate(box(0.2, 2.7, 10), 5.9, 1.65, 0);\nscene.add(gf_right, {material: \"wood\", color: [0.70, 0.55, 0.37]});\n\n// First floor slab\nconst floor1 = translate(box(12, 0.25, 10), 0, 3.125, 0);\nscene.add(floor1, {material: \"concrete\", color: [0.60, 0.60, 0.58]});\n\n// Upper floor walls\nconst uf_front = translate(box(12, 2.7, 0.2), 0, 4.6, -4.9);\nscene.add(uf_front, {material: \"wood\", color: [0.76, 0.60, 0.42]});\n\nconst uf_back = translate(box(12, 2.7, 0.2), 0, 4.6, 4.9);\nscene.add(uf_back, {material: \"wood\", color: [0.72, 0.56, 0.38]});\n\nconst uf_left = translate(box(0.2, 2.7, 10), -5.9, 4.6, 0);\nscene.add(uf_left, {material: \"wood\", color: [0.68, 0.53, 0.35]});\n\nconst uf_right = translate(box(0.2, 2.7, 10), 5.9, 4.6, 0);\nscene.add(uf_right, {material: \"wood\", color: [0.70, 0.55, 0.37]});\n\n// Gable roof — ~30deg pitch\nconst roof_left = translate(rotate(box(12.6, 0.08, 6.2), 0.52, 0, 0), 0, 7.5, -2.5);\nscene.add(roof_left, {material: \"metal\", color: [0.25, 0.22, 0.20]});\n\nconst roof_right = translate(rotate(box(12.6, 0.08, 6.2), -0.52, 0, 0), 0, 7.5, 2.5);\nscene.add(roof_right, {material: \"metal\", color: [0.25, 0.22, 0.20]});\n\n// Front porch\nconst porch_post_l = translate(box(0.12, 2.5, 0.12), -1.0, 1.55, -5.8);\nscene.add(porch_post_l, {material: \"wood\", color: [0.65, 0.50, 0.33]});\n\nconst porch_post_r = translate(box(0.12, 2.5, 0.12), 1.0, 1.55, -5.8);\nscene.add(porch_post_r, {material: \"wood\", color: [0.65, 0.50, 0.33]});\n\nconst porch_roof = translate(rotate(box(2.8, 0.06, 1.4), 0.15, 0, 0), 0, 2.9, -5.5);\nscene.add(porch_roof, {material: \"metal\", color: [0.30, 0.27, 0.25]});\n\nconst porch_floor = translate(box(2.4, 0.12, 1.2), 0, 0.36, -5.5);\nscene.add(porch_floor, {material: \"concrete\", color: [0.58, 0.56, 0.54]});",
+  "bom_suggestion": [
+    { "material_id": "pine_48x148_c24", "quantity": 85, "unit": "jm" },
+    { "material_id": "pine_48x98_c24", "quantity": 60, "unit": "jm" },
+    { "material_id": "osb_11mm", "quantity": 48, "unit": "m2" },
+    { "material_id": "mineral_wool_150", "quantity": 96, "unit": "m2" },
+    { "material_id": "concrete_c25", "quantity": 8.5, "unit": "m3" },
+    { "material_id": "metal_roof_ruukki", "quantity": 72, "unit": "m2" },
+    { "material_id": "gypsum_board_13mm", "quantity": 180, "unit": "m2" },
+    { "material_id": "vapor_barrier", "quantity": 120, "unit": "m2" },
+    { "material_id": "wind_barrier", "quantity": 120, "unit": "m2" },
+    { "material_id": "wood_screw_5x80", "quantity": 1200, "unit": "kpl" }
+  ]
+}

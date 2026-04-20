@@ -1,0 +1,21 @@
+{
+  "name": "helscoop-scraper",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "scrape": "tsx src/scrape.ts",
+    "scrape:krauta": "tsx src/scrape.ts --supplier k-rauta",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.10.9",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  }
+}
