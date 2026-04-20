@@ -1,0 +1,32 @@
+{
+  "name": "helscoop-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@types/three": "^0.184.0",
+    "framer-motion": "^12.38.0",
+    "jspdf": "^4.2.1",
+    "manifold-3d": "^3.4.1",
+    "next": "^14.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "three": "^0.184.0",
+    "three-bvh-csg": "^0.0.18"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.47",
+    "@types/react-dom": "^18.2.18",
+    "jsdom": "^29.0.2",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  }
+}
