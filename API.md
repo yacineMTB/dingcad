@@ -1,4 +1,4 @@
-# DingCAD JavaScript API Cheat Sheet
+# Helscoop JavaScript API Cheat Sheet
 
 - cube{options: {size:[x,y,z], center:bool}}
 - sphere{options: {radius:number}}

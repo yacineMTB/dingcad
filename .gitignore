@@ -1,1 +1,40 @@
+# Build output
 build/
+
+# Renders (generated images)
+renders/
+*.png
+!materials/textures/**/*.png
+!web/public/og-default.png
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+
+# Node
+node_modules/
+.next/
+dist/
+
+# Docker
+pgdata/
+
+# Environment
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.log
+
+# Playwright
+e2e/test-results/
+e2e/playwright-report/
+e2e/blob-report/
